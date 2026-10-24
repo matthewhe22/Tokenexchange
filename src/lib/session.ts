@@ -62,11 +62,14 @@ export async function requireAdmin() {
   return user;
 }
 
-/** Invalidates every session of the user (e.g. after a password change). Returns the new version. */
-export async function bumpSessionVersion(userId: number): Promise<number> {
+/**
+ * Invalidates every session of the user, optionally applying other column changes (e.g. a new
+ * password hash) in the same statement so they can never be half-applied. Returns the new version.
+ */
+export async function bumpSessionVersion(userId: number, also: Partial<typeof schema.users.$inferInsert> = {}): Promise<number> {
   const [row] = await getDb()
     .update(schema.users)
-    .set({ sessionVersion: sql`${schema.users.sessionVersion} + 1` })
+    .set({ ...also, sessionVersion: sql`${schema.users.sessionVersion} + 1` })
     .where(eq(schema.users.id, userId))
     .returning({ v: schema.users.sessionVersion });
   return row.v;

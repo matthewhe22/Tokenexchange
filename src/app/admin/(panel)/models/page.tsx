@@ -9,17 +9,18 @@ export default async function ModelsPage() {
       <h1>Models &amp; prices</h1>
       <p className="muted">
         Enter the vendor&apos;s official list price in USD per 1M tokens. Customers pay list × markup; a model must be listed and
-        enabled here before it can be called. Cache prices default to the input price when blank.
+        enabled here before it can be called. Cache prices default to the input price when blank. Max output caps
+        requests that set no limit; requests are held against the balance at this worst case.
       </p>
       <div className="card scroll">
         <table>
           <thead>
-            <tr><th>Model</th><th>Input</th><th>Output</th><th>Cache read</th><th>Cache write</th><th>Markup</th><th>Enabled</th><th></th></tr>
+            <tr><th>Model</th><th>Input</th><th>Output</th><th>Cache read</th><th>Cache write</th><th>Markup</th><th>Max output</th><th>Enabled</th><th></th></tr>
           </thead>
           <tbody>
             {prices.map((p) => (
               <tr key={p.model}>
-                <td colSpan={8} style={{ padding: 0 }}>
+                <td colSpan={9} style={{ padding: 0 }}>
                   <form action={savePrice} className="row" style={{ padding: "6px", flexWrap: "nowrap" }}>
                     <input name="model" defaultValue={p.model} readOnly className="mono" style={{ minWidth: 200 }} />
                     <input name="inputPrice" type="number" step="any" defaultValue={p.inputPrice} />
@@ -27,6 +28,7 @@ export default async function ModelsPage() {
                     <input name="cacheReadPrice" type="number" step="any" defaultValue={p.cacheReadPrice ?? ""} />
                     <input name="cacheWritePrice" type="number" step="any" defaultValue={p.cacheWritePrice ?? ""} />
                     <input name="markup" type="number" step="any" defaultValue={p.markup} />
+                    <input name="maxOutputTokens" type="number" min={1} defaultValue={p.maxOutputTokens ?? ""} placeholder="32768" />
                     <input name="enabled" type="checkbox" defaultChecked={p.enabled} />
                     <button className="secondary">Save</button>
                     <button className="danger" formAction={deletePrice}>Delete</button>
@@ -45,6 +47,7 @@ export default async function ModelsPage() {
         <div><label>Cache read $/1M</label><input name="cacheReadPrice" type="number" step="any" /></div>
         <div><label>Cache write $/1M</label><input name="cacheWritePrice" type="number" step="any" /></div>
         <div><label>Markup</label><input name="markup" type="number" step="any" defaultValue={1} /></div>
+        <div><label>Max output tokens (blank = 32768)</label><input name="maxOutputTokens" type="number" min={1} /></div>
         <div className="row"><input id="new-enabled" name="enabled" type="checkbox" defaultChecked /><label htmlFor="new-enabled" style={{ margin: 0 }}>Enabled</label></div>
         <div><button>Add model</button></div>
       </form>

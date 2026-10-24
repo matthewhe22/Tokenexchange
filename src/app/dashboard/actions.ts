@@ -72,9 +72,9 @@ export async function changePassword(_prev: unknown, form: FormData): Promise<{ 
   const next = str(form, "password");
   if (!user.passwordHash || !(await bcrypt.compare(current, user.passwordHash))) return { error: "Current password is incorrect" };
   if (next.length < 8) return { error: "New password must be at least 8 characters" };
-  await getDb().update(schema.users).set({ passwordHash: await bcrypt.hash(next, 10) }).where(eq(schema.users.id, user.id));
   // Sign out every other device, then re-issue this browser's session at the new version.
-  await createSession(user.id, await bumpSessionVersion(user.id));
+  const version = await bumpSessionVersion(user.id, { passwordHash: await bcrypt.hash(next, 10) });
+  await createSession(user.id, version);
   return { message: "Password updated. Other devices have been signed out." };
 }
 

@@ -44,7 +44,7 @@ describe("usage extraction", () => {
 });
 
 describe("chargeFor", () => {
-  const price = { model: "m", inputPrice: 3, outputPrice: 15, cacheReadPrice: 0.3, cacheWritePrice: null, markup: 1.2, enabled: true, updatedAt: new Date() };
+  const price = { model: "m", inputPrice: 3, outputPrice: 15, cacheReadPrice: 0.3, cacheWritePrice: null, markup: 1.2, maxOutputTokens: null, enabled: true, updatedAt: new Date() };
   it("prices in micro-USD and applies markup and cost multiplier", () => {
     // 1000*3 + 100*15 + 1000*0.3 + 10*3 (cache write falls back to input) = 4830 list
     const r = chargeFor({ input: 1000, output: 100, cacheRead: 1000, cacheWrite: 10 }, price, 0.7);
@@ -70,19 +70,48 @@ describe("formatting", async () => {
   });
 });
 
-describe("estimateCost", async () => {
-  const { estimateCost, DEFAULT_OUTPUT_ESTIMATE, MAX_OUTPUT_ESTIMATE } = await import("@/lib/reservations");
-  const price = { model: "m", inputPrice: 2, outputPrice: 10, cacheReadPrice: null, cacheWritePrice: null, markup: 1.5, enabled: true, updatedAt: new Date() };
-  it("uses the request's own output limit per protocol", () => {
-    expect(estimateCost("anthropic-messages", { max_tokens: 100 }, 400, price)).toBe(Math.ceil((100 * 2 + 100 * 10) * 1.5));
-    expect(estimateCost("openai-chat", { max_completion_tokens: 50 }, 0, price)).toBe(Math.ceil(50 * 10 * 1.5));
-    expect(estimateCost("gemini", { generationConfig: { maxOutputTokens: 10 } }, 0, price)).toBe(150);
+describe("worst-case cost planning", async () => {
+  const r = await import("@/lib/reservations");
+  const price = { model: "m", inputPrice: 2, outputPrice: 10, cacheReadPrice: null, cacheWritePrice: null, markup: 1.5, maxOutputTokens: null, enabled: true, updatedAt: new Date() };
+
+  it("counts text at 3 bytes/token and base64 blobs per blob", () => {
+    expect(r.estimateInputTokens("x".repeat(300))).toBe(100);
+    const blob = "A".repeat(100_000);
+    expect(r.estimateInputTokens(`{"img":"${blob}"}`)).toBe(Math.ceil(12 / 3) + 4000);
   });
-  it("falls back to a default and caps huge limits", () => {
-    expect(estimateCost("openai-chat", {}, 0, price)).toBe(Math.ceil(DEFAULT_OUTPUT_ESTIMATE * 10 * 1.5));
-    expect(estimateCost("openai-chat", { max_tokens: 10_000_000 }, 0, price)).toBe(Math.ceil(MAX_OUTPUT_ESTIMATE * 10 * 1.5));
+
+  it("uses the request's limit, else the model max, else the default", () => {
+    expect(r.planCost("anthropic-messages", { max_tokens: 100 }, "", price).outputCap).toBe(100);
+    expect(r.planCost("openai-chat", {}, "", price).outputCap).toBe(r.DEFAULT_MAX_OUTPUT);
+    expect(r.planCost("openai-chat", {}, "", { ...price, maxOutputTokens: 8000 }).outputCap).toBe(8000);
+    expect(r.planCost("openai-chat", { max_tokens: 1e9 }, "", { ...price, maxOutputTokens: 8000 }).outputCap).toBe(8000);
+    expect(r.planCost("gemini", { generationConfig: { maxOutputTokens: 10 } }, "", price).outputCap).toBe(10);
+    expect(r.planCost("openai-embeddings", { max_tokens: 99 }, "", price).outputCap).toBe(0);
   });
-  it("charges no output for embeddings", () => {
-    expect(estimateCost("openai-embeddings", { max_tokens: 99 }, 40, price)).toBe(Math.ceil(10 * 2 * 1.5));
+
+  it("prices n choices, cache writes and markup", () => {
+    const p = r.planCost("openai-chat", { n: 3, max_tokens: 10 }, "x".repeat(30), { ...price, cacheWritePrice: 4 });
+    expect(p.cost(10)).toBe(Math.ceil((10 * 4 + 10 * 3 * 10) * 1.5));
+  });
+
+  it("shrinks the output cap to what the balance covers", () => {
+    const p = r.planCost("openai-chat", { max_tokens: 1000 }, "", price); // 15 micro-USD per output token
+    expect(r.affordableOutput(p, 1e9)).toBe(1000);
+    expect(r.affordableOutput(p, 15 * 400)).toBe(400);
+    expect(p.cost(r.affordableOutput(p, 15 * 400 + 7))).toBeLessThanOrEqual(15 * 400 + 7);
+    const withInput = r.planCost("openai-chat", { max_tokens: 1000 }, "x".repeat(3000), price); // 1000 input tokens
+    expect(r.affordableOutput(withInput, 100)).toBe(-1);
+  });
+
+  it("writes the cap into each protocol's own field", () => {
+    const chat: Record<string, unknown> = { max_tokens: 5000 };
+    r.applyOutputCap("openai-chat", chat, 100);
+    expect(chat).toEqual({ max_tokens: 100 });
+    const chat2: Record<string, unknown> = {};
+    r.applyOutputCap("openai-chat", chat2, 100);
+    expect(chat2).toEqual({ max_completion_tokens: 100 });
+    const gem: Record<string, unknown> = { generationConfig: { temperature: 0 } };
+    r.applyOutputCap("gemini", gem, 7);
+    expect(gem).toEqual({ generationConfig: { temperature: 0, maxOutputTokens: 7 } });
   });
 });

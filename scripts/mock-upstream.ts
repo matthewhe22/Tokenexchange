@@ -54,6 +54,14 @@ export function startMockUpstream(port: number): Promise<{ received: Received[];
       return res.end("<h1>Mock Stripe Checkout</h1>");
     }
 
+    if (path === "/reset/v1/chat/completions") {
+      // headers sent, then the connection drops mid-body
+      res.writeHead(200, { "content-type": "application/json", "content-length": "1000" });
+      res.write('{"choices":');
+      setTimeout(() => res.destroy(), 50);
+      return;
+    }
+
     if (path === "/slow/v1/chat/completions") {
       await new Promise((r) => setTimeout(r, 800));
       return json(200, { choices: [{ message: { content: "slow" } }], usage: { prompt_tokens: 20, completion_tokens: 5 } });
@@ -88,6 +96,7 @@ export function startMockUpstream(port: number): Promise<{ received: Received[];
     if (path === "/anthropic/v1/messages") {
       if (req.headers["x-api-key"] !== "up-anthropic") return json(401, { type: "error", error: { type: "authentication_error", message: "bad key" } });
       if (body.max_tokens == null) return json(400, { type: "error", error: { type: "invalid_request_error", message: "max_tokens: field required" } });
+      if (body.bogus_param) return json(400, { type: "error", error: { type: "invalid_request_error", message: "bogus_param: Extra inputs are not permitted" } });
       return body.stream ? sse(res, anthropicEvents("pong")) : json(200, anthropicJson);
     }
 

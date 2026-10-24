@@ -39,6 +39,7 @@ await db.insert(schema.modelPrices).values([
   { model: "azure-test", inputPrice: 1, outputPrice: 1 },
   { model: "orphan-test", inputPrice: 1, outputPrice: 1 },
   { model: "slow-test", inputPrice: 1, outputPrice: 1 },
+  { model: "reset-test", inputPrice: 1, outputPrice: 1 },
 ]);
 
 type NewChannel = typeof schema.channels.$inferInsert;
@@ -54,6 +55,7 @@ await db.insert(schema.channels).values([
   channel({ name: "anthropic relay", provider: "anthropic_compatible", source: "reseller", baseUrl: `${MOCK}/anthropic`, credentials: { apiKey: "up-anthropic" }, models: ["claude-test"], priority: 5 }),
   channel({ name: "bedrock", provider: "bedrock", source: "cloud", baseUrl: `${MOCK}/bedrock`, config: { region: "us-east-1" }, credentials: { apiKey: "up-bedrock" }, models: ["claude-test"], modelMapping: { "claude-test": "us.anthropic.claude-test-v1:0" } }),
   channel({ name: "vertex", provider: "vertex", source: "cloud", baseUrl: `${MOCK}/vertex`, config: { location: "global" }, credentials: { serviceAccount }, models: ["claude-vertex", "gemini-test"] }),
+  channel({ name: "reset", provider: "openai_compatible", source: "reseller", baseUrl: `${MOCK}/reset/v1`, credentials: { apiKey: "x" }, models: ["reset-test"] }),
   channel({ name: "slow", provider: "openai_compatible", source: "reseller", baseUrl: `${MOCK}/slow/v1`, credentials: { apiKey: "x" }, models: ["slow-test"] }),
   channel({ name: "gemini official", provider: "gemini", source: "official", baseUrl: `${MOCK}/gemini`, credentials: { apiKey: "up-gemini" }, models: ["gemini-test"], priority: 5 }),
 ]);
@@ -139,9 +141,9 @@ await step("Anthropic Messages stream via relay (x-api-key auth from client), ma
 });
 
 await step("Upstream 400 is passed through and not retried", async () => {
-  const res = await post("/v1/messages", { model: "claude-test", messages: [] }, { "x-api-key": key });
+  const res = await post("/v1/messages", { model: "claude-test", max_tokens: 5, bogus_param: true, messages: [] }, { "x-api-key": key });
   assert.equal(res.status, 400);
-  assert.match(await res.text(), /max_tokens/);
+  assert.match(await res.text(), /bogus_param/);
   await logsSettled(++logs);
 });
 
@@ -231,10 +233,30 @@ await step("Concurrent requests cannot overdraw: the first holds the whole small
   assert.equal(results.filter((s) => s === 402).length, 4, String(results));
   await logsSettled((logs += 1));
   await new Promise((r) => setTimeout(r, 300));
+  // the hold could only cover ~985 output tokens, so the upstream request was capped to that
+  const slowCall = mock.received.filter((r) => r.path === "/slow/v1/chat/completions").at(-1)!;
+  assert.ok(slowCall.body.max_completion_tokens >= 256 && slowCall.body.max_completion_tokens < 1000, JSON.stringify(slowCall.body));
   // actual cost 20 + 5 = 25; the rest of the hold is returned
   const [u] = await db.select().from(schema.users).where(eq(schema.users.id, user.id));
   assert.equal(u.balance, 1000 - 25);
   assert.equal(await reservationsLeft(), 0);
+});
+
+await step("A balance too small for even a short answer is refused before calling upstream", async () => {
+  await db.update(schema.users).set({ balance: 100 }).where(eq(schema.users.id, user.id));
+  const before = mock.received.length;
+  assert.equal((await post("/v1/chat/completions", { model: "slow-test", messages: [] })).status, 402);
+  assert.equal(mock.received.length, before);
+  assert.equal((await db.select().from(schema.users).where(eq(schema.users.id, user.id)))[0].balance, 100);
+});
+
+await step("If the upstream connection drops mid-body, the hold is released and the client gets a clean 502", async () => {
+  await db.update(schema.users).set({ balance: 1_000_000 }).where(eq(schema.users.id, user.id));
+  const res = await post("/v1/chat/completions", { model: "reset-test", messages: [] });
+  assert.equal(res.status, 502);
+  assert.equal((await res.json()).error.message, "gateway error, please retry");
+  assert.equal(await reservationsLeft(), 0);
+  assert.equal((await db.select().from(schema.users).where(eq(schema.users.id, user.id)))[0].balance, 1_000_000);
 });
 
 await step("Stale reservations are released by the cron endpoint", async () => {

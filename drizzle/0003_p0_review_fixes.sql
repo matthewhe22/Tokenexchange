@@ -1,0 +1,1 @@
+ALTER TABLE "model_prices" ADD COLUMN "max_output_tokens" integer;

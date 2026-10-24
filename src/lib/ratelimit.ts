@@ -18,13 +18,17 @@ async function incrUpstash(cfg: { url: string; token: string }, key: string, win
   const res = await fetch(`${cfg.url}/pipeline`, {
     method: "POST",
     headers: { authorization: `Bearer ${cfg.token}`, "content-type": "application/json" },
+    // The key is per-window, so a plain EXPIRE (re-set on every hit) is enough.
     body: JSON.stringify([
       ["INCR", key],
-      ["EXPIRE", key, String(windowSec + 1), "NX"],
+      ["EXPIRE", key, String(windowSec + 1)],
     ]),
+    signal: AbortSignal.timeout(500),
   });
   if (!res.ok) throw new Error(`upstash ${res.status}`);
-  const [incr] = (await res.json()) as { result: number }[];
+  // Per-command failures come back as HTTP 200 with { error } entries.
+  const [incr] = (await res.json()) as { result?: unknown; error?: string }[];
+  if (typeof incr?.result !== "number") throw new Error(`upstash: ${incr?.error ?? "unexpected response"}`);
   return incr.result;
 }
 
@@ -32,8 +36,11 @@ async function incrPostgres(key: string, windowStart: number): Promise<number> {
   const rows = await getDb().execute<{ count: number }>(sql`
     insert into rate_limits (bucket, window_start, count) values (${key}, ${windowStart}, 1)
     on conflict (bucket) do update set
-      count = case when rate_limits.window_start = excluded.window_start then rate_limits.count + 1 else 1 end,
-      window_start = excluded.window_start
+      -- Instances with skewed clocks must never move the window backwards or reset a newer one.
+      count = case
+        when excluded.window_start > rate_limits.window_start then 1
+        else rate_limits.count + 1 end,
+      window_start = greatest(rate_limits.window_start, excluded.window_start)
     returning count`);
   return Number(rows[0].count);
 }

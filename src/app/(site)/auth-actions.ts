@@ -108,11 +108,7 @@ export async function resetPassword(_prev: FormState | undefined, form: FormData
   if (!userId) return { error: "This reset link is invalid or has expired. Request a new one." };
   const db = getDb();
   const [user] = await db.select().from(schema.users).where(eq(schema.users.id, userId));
-  await db
-    .update(schema.users)
-    // The reset link proves control of the inbox, so it also verifies the address.
-    .set({ passwordHash: await bcrypt.hash(password, 10), emailVerifiedAt: user?.emailVerifiedAt ?? new Date() })
-    .where(eq(schema.users.id, userId));
-  await bumpSessionVersion(userId);
+  // The reset link proves control of the inbox, so it also verifies the address.
+  await bumpSessionVersion(userId, { passwordHash: await bcrypt.hash(password, 10), emailVerifiedAt: user?.emailVerifiedAt ?? new Date() });
   redirect("/login?reset=1");
 }

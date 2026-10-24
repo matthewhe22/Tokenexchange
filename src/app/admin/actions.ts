@@ -121,6 +121,7 @@ export async function savePrice(form: FormData) {
     cacheReadPrice: opt("cacheReadPrice"),
     cacheWritePrice: opt("cacheWritePrice"),
     markup: num(form, "markup", 1),
+    maxOutputTokens: str(form, "maxOutputTokens") ? Math.max(1, Math.floor(num(form, "maxOutputTokens", 0))) : null,
     enabled: form.get("enabled") === "on",
     updatedAt: new Date(),
   };

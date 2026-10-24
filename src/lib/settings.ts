@@ -38,7 +38,8 @@ export interface LimitSettings {
   userRpm: number;
 }
 
-export const DEFAULT_LIMITS: LimitSettings = { defaultKeyRpm: 300, userRpm: 0 };
+// Off by default so enabling the feature never surprises existing customers; set limits in the admin console.
+export const DEFAULT_LIMITS: LimitSettings = { defaultKeyRpm: 0, userRpm: 0 };
 
 export async function getLimitSettings(): Promise<LimitSettings> {
   return cached("settings:limits", async () => {

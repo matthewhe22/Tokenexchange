@@ -91,6 +91,8 @@ export const modelPrices = pgTable("model_prices", {
   cacheReadPrice: doublePrecision("cache_read_price"),
   cacheWritePrice: doublePrecision("cache_write_price"),
   markup: doublePrecision("markup").notNull().default(1),
+  // Largest output the model can produce; caps requests that set no limit (null = MAX_OUTPUT default).
+  maxOutputTokens: integer("max_output_tokens"),
   enabled: boolean("enabled").notNull().default(true),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

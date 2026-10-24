@@ -2,7 +2,7 @@ import { waitUntil } from "@vercel/functions";
 import { chargeFor, getPrices, recordUsage, type ModelPrice } from "@/lib/billing";
 import { getActiveChannels, markChannelFailure, markChannelHealthy, type LoadedChannel } from "@/lib/channels";
 import { hit } from "@/lib/ratelimit";
-import { estimateCost, releaseStaleReservations, reserve } from "@/lib/reservations";
+import { applyOutputCap, planCost, releaseStaleReservations, reserve } from "@/lib/reservations";
 import { getLimitSettings, getRoutingSettings } from "@/lib/settings";
 import { authenticateApiKey, extractApiKey, type ApiKeyRow, type UserRow } from "./auth";
 import { bedrockToSSE } from "./bedrock-stream";
@@ -42,9 +42,10 @@ interface Ctx {
   endpoint: string;
   started: number;
   reservationId: number | null;
+  settled: boolean;
 }
 
-async function settle(ctx: Ctx, ch: LoadedChannel | null, status: number, usage: Usage | null, error?: string) {
+async function settleOnce(ctx: Ctx, ch: LoadedChannel | null, status: number, usage: Usage | null, error?: string) {
   const { cost, upstreamCost } =
     usage && ch ? chargeFor(usage, ctx.price, ch.costMultiplier) : { cost: 0, upstreamCost: 0 };
   await recordUsage({
@@ -65,6 +66,26 @@ async function settle(ctx: Ctx, ch: LoadedChannel | null, status: number, usage:
   });
 }
 
+/**
+ * Settles a request exactly once (later calls are ignored), retrying transient database errors.
+ * If every attempt fails the hold stays in place and the stale-reservation sweep releases it.
+ */
+async function settle(ctx: Ctx, ch: LoadedChannel | null, status: number, usage: Usage | null, error?: string) {
+  if (ctx.settled) return;
+  ctx.settled = true;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await settleOnce(ctx, ch, status, usage, error);
+    } catch (err) {
+      if (attempt >= 2) {
+        console.error("settle failed; usage not recorded", { userId: ctx.user.id, model: ctx.req.model, usage, err });
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 200 * 3 ** attempt));
+    }
+  }
+}
+
 export async function relay(req: Request, protocol: Protocol, opts: RelayOptions): Promise<Response> {
   const started = Date.now();
   const key = extractApiKey(req);
@@ -74,11 +95,10 @@ export async function relay(req: Request, protocol: Protocol, opts: RelayOptions
   const { user, apiKey } = auth;
 
   let body: Json;
-  let rawBytes: number;
+  let rawText: string;
   try {
-    const raw = await req.text();
-    rawBytes = Buffer.byteLength(raw);
-    body = JSON.parse(raw);
+    rawText = await req.text();
+    body = JSON.parse(rawText);
   } catch {
     return relayError(protocol, 400, "request body must be valid JSON");
   }
@@ -99,11 +119,11 @@ export async function relay(req: Request, protocol: Protocol, opts: RelayOptions
   }
 
   const limits = await getLimitSettings();
-  const [keyLimit, userLimit] = await Promise.all([
-    hit(`key:${apiKey.id}`, apiKey.rpmLimit ?? limits.defaultKeyRpm),
-    hit(`user:${user.id}`, limits.userRpm),
-  ]);
-  for (const l of [keyLimit, userLimit]) {
+  for (const [bucket, limit] of [
+    [`key:${apiKey.id}`, apiKey.rpmLimit ?? limits.defaultKeyRpm],
+    [`user:${user.id}`, limits.userRpm],
+  ] as const) {
+    const l = await hit(bucket, limit);
     if (!l.ok) {
       return relayError(protocol, 429, "rate limit exceeded, please slow down", "rate_limit_exceeded", { "retry-after": String(l.retryAfter) });
     }
@@ -113,18 +133,38 @@ export async function relay(req: Request, protocol: Protocol, opts: RelayOptions
   const candidates = orderChannels(channels, model, protocol, routing).slice(0, Math.max(1, routing.maxAttempts));
   if (!candidates.length) return relayError(protocol, 503, `no upstream channel is available for '${model}'`);
 
-  // Hold funds for the worst case before calling upstream; settle() returns the difference.
-  const held = await reserve(user.id, apiKey.id, estimateCost(protocol, body, rawBytes, price));
+  // Hold funds for the worst case before calling upstream, and cap the output so the upstream can
+  // never produce more than was held. settle() returns the difference.
+  const plan = planCost(protocol, body, rawText, price);
+  let held = await reserve(user.id, apiKey.id, plan);
+  // Funds may be stuck in holds from killed functions; release this user's stale ones and retry.
+  if (!held.ok && (await releaseStaleReservations(undefined, user.id).catch(() => 0)) > 0) {
+    held = await reserve(user.id, apiKey.id, plan);
+  }
   if (!held.ok) {
     return held.reason === "key_quota"
       ? relayError(protocol, 402, "this API key has reached its spending limit", "insufficient_quota")
       : relayError(protocol, 402, "insufficient balance, please top up", "insufficient_quota");
   }
+  if (plan.outputCap > 0) applyOutputCap(protocol, body, held.outputCap);
   // Cheap sweep for funds held by functions that were killed mid-request; cron does the same daily.
   if (Math.random() < 0.01) waitUntil(releaseStaleReservations().catch(() => 0));
 
   const rreq: RelayRequest = { protocol, model, stream, body, headers: req.headers };
-  const ctx: Ctx = { user, apiKey, price, req: rreq, endpoint: opts.endpoint, started, reservationId: held.id };
+  const ctx: Ctx = { user, apiKey, price, req: rreq, endpoint: opts.endpoint, started, reservationId: held.id, settled: false };
+  try {
+    return await forward(ctx, candidates, routing.autoDisableAfter);
+  } catch (err) {
+    // Anything unexpected after the hold (body read failure, bug): release it and answer cleanly.
+    console.error("relay failed", err);
+    await settle(ctx, null, 502, null, `gateway error: ${err instanceof Error ? err.message : String(err)}`);
+    return relayError(protocol, 502, "gateway error, please retry");
+  }
+}
+
+async function forward(ctx: Ctx, candidates: LoadedChannel[], autoDisableAfter: number): Promise<Response> {
+  const { protocol, model, stream } = ctx.req;
+  const rreq = ctx.req;
   let lastError = { status: 502, message: "upstream request failed" };
   let lastChannel: LoadedChannel | null = null;
 
@@ -139,7 +179,7 @@ export async function relay(req: Request, protocol: Protocol, opts: RelayOptions
       res = await fetch(call.request);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      waitUntil(markChannelFailure(ch.id, message, routing.autoDisableAfter));
+      waitUntil(markChannelFailure(ch.id, message, autoDisableAfter));
       lastError = { status: 502, message };
       continue;
     }
@@ -148,7 +188,7 @@ export async function relay(req: Request, protocol: Protocol, opts: RelayOptions
       const text = await res.text().catch(() => "");
       const detail = `HTTP ${res.status}: ${text.slice(0, 500)}`;
       if (RETRYABLE.has(res.status)) {
-        waitUntil(markChannelFailure(ch.id, detail, routing.autoDisableAfter));
+        waitUntil(markChannelFailure(ch.id, detail, autoDisableAfter));
         lastError = { status: res.status, message: detail };
         continue;
       }
@@ -169,6 +209,7 @@ export async function relay(req: Request, protocol: Protocol, opts: RelayOptions
       } catch {
         // non-JSON success body: relay it, but there is nothing to bill
       }
+      // Never fail a successful upstream call because bookkeeping failed; settle() logs and retries.
       await settle(ctx, ch, res.status, usage, usage ? undefined : "no usage in upstream response");
       return new Response(text, { status: res.status, headers: { "content-type": res.headers.get("content-type") ?? "application/json" } });
     }

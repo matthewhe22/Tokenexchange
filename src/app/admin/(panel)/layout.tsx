@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireAdmin } from "@/lib/session";
 import { logout } from "@/app/(site)/auth-actions";
+import { formatDateTime, tzLabel } from "@/lib/time";
 
 export const dynamic = "force-dynamic";
 
@@ -24,15 +25,29 @@ export default async function PanelLayout({ children }: { children: React.ReactN
           <button className="secondary">Sign out</button>
         </form>
       </nav>
-      <main className="main">
-        {!admin.totpEnabledAt && (
-          <div className="notice error">
-            Your admin account has no two-factor authentication. <Link href="/dashboard/account">Turn it on</Link> — admin
-            accounts can move money and read every customer&apos;s data.
-          </div>
-        )}
-        {children}
+      <main className="main admin-main">
+        <div className="admin-content">
+          {!admin.totpEnabledAt && (
+            <div className="notice error">
+              Your admin account has no two-factor authentication. <Link href="/dashboard/account">Turn it on</Link> — admin
+              accounts can move money and read every customer&apos;s data.
+            </div>
+          )}
+          {children}
+        </div>
+        <AppVersionFooter />
       </main>
     </div>
+  );
+}
+
+function AppVersionFooter() {
+  const built = process.env.BUILD_TIME ? new Date(process.env.BUILD_TIME) : null;
+  const commit = process.env.BUILD_COMMIT;
+  return (
+    <footer className="admin-footer muted">
+      Last app update: {built ? `${formatDateTime(built)} ${tzLabel(built)}` : "unknown"}
+      {commit && <> · version <span className="mono">{commit}</span></>}
+    </footer>
   );
 }

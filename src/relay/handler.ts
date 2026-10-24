@@ -2,7 +2,9 @@ import { waitUntil } from "@vercel/functions";
 import { chargeFor, getPrices, recordUsage, type ModelPrice } from "@/lib/billing";
 import { getActiveChannels, markChannelFailure, markChannelHealthy, type LoadedChannel } from "@/lib/channels";
 import { hit } from "@/lib/ratelimit";
+import { runMaintenance } from "@/lib/maintenance";
 import { applyOutputCap, planCost, releaseStaleReservations, reserve } from "@/lib/reservations";
+import { priceForGroup } from "@/lib/groups";
 import { getLimitSettings, getRoutingSettings } from "@/lib/settings";
 import { authenticateApiKey, extractApiKey, type ApiKeyRow, type UserRow } from "./auth";
 import { bedrockToSSE } from "./bedrock-stream";
@@ -117,8 +119,9 @@ export async function relay(req: Request, protocol: Protocol, opts: RelayOptions
   if (typeof model !== "string" || !model) return relayError(protocol, 400, "model is required");
   const stream = opts.stream ?? body.stream === true;
 
-  const price = (await getPrices()).get(model);
-  if (!price || !price.enabled) return relayError(protocol, 404, `model '${model}' is not available`, "model_not_found");
+  const listed = (await getPrices()).get(model);
+  if (!listed || !listed.enabled) return relayError(protocol, 404, `model '${model}' is not available`, "model_not_found");
+  const price = await priceForGroup(listed, user.groupId);
   if (apiKey.allowedModels && !apiKey.allowedModels.includes(model)) {
     return relayError(protocol, 403, `this API key may not use model '${model}'`);
   }
@@ -166,8 +169,9 @@ export async function relay(req: Request, protocol: Protocol, opts: RelayOptions
       : relayError(protocol, 402, "insufficient balance, please top up", "insufficient_quota");
   }
   if (plan.outputCap > 0) applyOutputCap(protocol, body, held.outputCap);
-  // Cheap sweep for funds held by functions that were killed mid-request; cron does the same daily.
-  if (Math.random() < 0.01) waitUntil(releaseStaleReservations().catch(() => 0));
+  // Opportunistic housekeeping between cron runs (Vercel Hobby only allows a daily cron):
+  // release holds from killed functions and probe auto-disabled channels, at most every 5 minutes.
+  if (Math.random() < 0.01) waitUntil(runMaintenance(5 * 60_000).catch(() => null));
 
   const rreq: RelayRequest = { protocol, model, stream, body, headers: req.headers };
   const ctx: Ctx = { user, apiKey, price, req: rreq, endpoint: opts.endpoint, started, reservationId: held.id, settled: false };

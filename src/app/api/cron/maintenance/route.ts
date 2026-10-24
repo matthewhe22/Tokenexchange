@@ -1,5 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
-import { releaseStaleReservations } from "@/lib/reservations";
+import { runMaintenance } from "@/lib/maintenance";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,5 +18,5 @@ export async function GET(req: Request) {
     return new Response("cron not configured", { status: 503 });
   }
   if (!authorized(req.headers.get("authorization"), secret)) return new Response("unauthorized", { status: 401 });
-  return Response.json({ released: await releaseStaleReservations() });
+  return Response.json(await runMaintenance());
 }

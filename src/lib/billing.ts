@@ -1,7 +1,9 @@
 import { eq, sql } from "drizzle-orm";
 import { getDb, schema } from "@/db";
 import type { Usage } from "@/relay/types";
+import { waitUntil } from "@vercel/functions";
 import { cached } from "./cache";
+import { maybeNotifyLowBalance } from "./notifications";
 
 export type ModelPrice = typeof schema.modelPrices.$inferSelect;
 
@@ -51,6 +53,7 @@ export interface UsageEntry {
  */
 export async function recordUsage(e: UsageEntry): Promise<void> {
   const u = e.usage ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+  let lowBalanceCheck: { balance: number; threshold: number | null } | null = null;
   await getDb().transaction(async (tx) => {
     let held = 0;
     if (e.reservationId != null) {
@@ -78,14 +81,22 @@ export async function recordUsage(e: UsageEntry): Promise<void> {
     });
     const delta = e.cost - held;
     if (delta !== 0) {
-      await tx
+      const [after] = await tx
         .update(schema.users)
         .set({ balance: sql`${schema.users.balance} - ${delta}` })
-        .where(eq(schema.users.id, e.userId));
+        .where(eq(schema.users.id, e.userId))
+        .returning({ balance: schema.users.balance, threshold: schema.users.lowBalanceThreshold, notifiedAt: schema.users.lowBalanceNotifiedAt });
+      if (after && e.cost > 0 && !after.notifiedAt) {
+        lowBalanceCheck = { balance: after.balance, threshold: after.threshold };
+      }
     }
     await tx
       .update(schema.apiKeys)
       .set({ used: sql`${schema.apiKeys.used} + ${delta}`, lastUsedAt: new Date() })
       .where(eq(schema.apiKeys.id, e.apiKeyId));
   });
+  if (lowBalanceCheck) {
+    const { balance, threshold } = lowBalanceCheck;
+    waitUntil(maybeNotifyLowBalance(e.userId, balance, threshold).catch((err) => console.error("low-balance email failed", err)));
+  }
 }

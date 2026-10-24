@@ -15,13 +15,23 @@ export default async function PanelLayout({ children }: { children: React.ReactN
         <Link href="/admin/models">Models &amp; prices</Link>
         <Link href="/admin/settings">Routing</Link>
         <Link href="/admin/users">Users</Link>
+        <Link href="/admin/groups">Pricing groups</Link>
         <Link href="/admin/logs">Usage logs</Link>
+        <Link href="/admin/audit">Audit log</Link>
         <form action={logout} style={{ marginTop: 16 }}>
           <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>{admin.email}</div>
           <button className="secondary">Sign out</button>
         </form>
       </nav>
-      <main className="main">{children}</main>
+      <main className="main">
+        {!admin.totpEnabledAt && (
+          <div className="notice error">
+            Your admin account has no two-factor authentication. <Link href="/dashboard/account">Turn it on</Link> — admin
+            accounts can move money and read every customer&apos;s data.
+          </div>
+        )}
+        {children}
+      </main>
     </div>
   );
 }

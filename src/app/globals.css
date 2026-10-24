@@ -128,3 +128,4 @@ pre code { background: none; border: 0; padding: 0; }
   .site-nav { gap: 12px; font-size: 13px; }
   .hero { padding-top: 40px; }
 }
+.qr svg { display: block; background: #fff; border-radius: 6px; }

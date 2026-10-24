@@ -59,3 +59,27 @@ export async function saveLimitSettings(value: LimitSettings): Promise<void> {
     .onConflictDoUpdate({ target: schema.settings.key, set: { value } });
   invalidate("settings:");
 }
+
+export interface SecuritySettings {
+  /** Admins without two-factor auth are sent to set it up before they can use the admin console. */
+  requireAdmin2fa: boolean;
+  /** Default low-balance email threshold in micro-USD (0 = off); users can override it. */
+  lowBalanceDefault: number;
+}
+
+export const DEFAULT_SECURITY: SecuritySettings = { requireAdmin2fa: false, lowBalanceDefault: 5_000_000 };
+
+export async function getSecuritySettings(): Promise<SecuritySettings> {
+  return cached("settings:security", async () => {
+    const [row] = await getDb().select().from(schema.settings).where(eq(schema.settings.key, "security"));
+    return { ...DEFAULT_SECURITY, ...((row?.value as Partial<SecuritySettings>) ?? {}) };
+  });
+}
+
+export async function saveSecuritySettings(value: SecuritySettings): Promise<void> {
+  await getDb()
+    .insert(schema.settings)
+    .values({ key: "security", value })
+    .onConflictDoUpdate({ target: schema.settings.key, set: { value } });
+  invalidate("settings:");
+}

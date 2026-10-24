@@ -40,6 +40,7 @@ await db.insert(schema.modelPrices).values([
   { model: "orphan-test", inputPrice: 1, outputPrice: 1 },
   { model: "slow-test", inputPrice: 1, outputPrice: 1 },
   { model: "reset-test", inputPrice: 1, outputPrice: 1 },
+  { model: "flaky-test", inputPrice: 1, outputPrice: 1 },
 ]);
 
 type NewChannel = typeof schema.channels.$inferInsert;
@@ -55,6 +56,7 @@ await db.insert(schema.channels).values([
   channel({ name: "anthropic relay", provider: "anthropic_compatible", source: "reseller", baseUrl: `${MOCK}/anthropic`, credentials: { apiKey: "up-anthropic" }, models: ["claude-test"], priority: 5 }),
   channel({ name: "bedrock", provider: "bedrock", source: "cloud", baseUrl: `${MOCK}/bedrock`, config: { region: "us-east-1" }, credentials: { apiKey: "up-bedrock" }, models: ["claude-test"], modelMapping: { "claude-test": "us.anthropic.claude-test-v1:0" } }),
   channel({ name: "vertex", provider: "vertex", source: "cloud", baseUrl: `${MOCK}/vertex`, config: { location: "global" }, credentials: { serviceAccount }, models: ["claude-vertex", "gemini-test"] }),
+  channel({ name: "flaky", provider: "openai_compatible", source: "reseller", baseUrl: `${MOCK}/flaky/v1`, credentials: { apiKey: "x" }, models: ["flaky-test"] }),
   channel({ name: "reset", provider: "openai_compatible", source: "reseller", baseUrl: `${MOCK}/reset/v1`, credentials: { apiKey: "x" }, models: ["reset-test"] }),
   channel({ name: "slow", provider: "openai_compatible", source: "reseller", baseUrl: `${MOCK}/slow/v1`, credentials: { apiKey: "x" }, models: ["slow-test"] }),
   channel({ name: "gemini official", provider: "gemini", source: "official", baseUrl: `${MOCK}/gemini`, credentials: { apiKey: "up-gemini" }, models: ["gemini-test"], priority: 5 }),
@@ -306,9 +308,9 @@ await step("Stale reservations are released by the cron endpoint", async () => {
   const [k] = await db.select().from(schema.apiKeys).where(eq(schema.apiKeys.userId, user.id));
   await db.insert(schema.reservations).values({ userId: user.id, apiKeyId: k.id, amount: 300, createdAt: new Date(Date.now() - 60 * 60 * 1000) });
   await db.update(schema.users).set({ balance: 200 }).where(eq(schema.users.id, user.id));
-  assert.equal((await fetch(`${BASE}/api/cron/release-reservations`)).status, 401);
-  const res = await fetch(`${BASE}/api/cron/release-reservations`, { headers: { authorization: `Bearer ${process.env.CRON_SECRET}` } });
-  assert.deepEqual(await res.json(), { released: 1 });
+  assert.equal((await fetch(`${BASE}/api/cron/maintenance`)).status, 401);
+  const res = await fetch(`${BASE}/api/cron/maintenance`, { headers: { authorization: `Bearer ${process.env.CRON_SECRET}` } });
+  assert.equal((await res.json()).released, 1);
   assert.equal((await db.select().from(schema.users).where(eq(schema.users.id, user.id)))[0].balance, 500);
 });
 
@@ -324,6 +326,44 @@ await step("Per-key requests-per-minute limit returns 429 with Retry-After", asy
   assert.equal(statuses[0], 200);
   assert.ok(statuses.includes(429) || blocked.status === 429, String(statuses));
   if (blocked.status === 429) assert.ok(Number(blocked.headers.get("retry-after")) > 0);
+  logs = (await db.select({ n: sql<number>`count(*)::int` }).from(schema.usageLogs))[0].n;
+});
+
+// ---------- P1: groups, auto-recovery, low-balance alert ----------
+await step("Pricing group multiplier discounts every request", async () => {
+  const [group] = await db.insert(schema.pricingGroups).values({ name: "wholesale", multiplier: 0.5 }).returning();
+  await db.update(schema.users).set({ groupId: group.id, balance: 1_000_000 }).where(eq(schema.users.id, user.id));
+  await new Promise((r) => setTimeout(r, 10_500)); // groups cache TTL
+  assert.equal((await post("/v1/chat/completions", { model: "gpt-test", messages: [] })).status, 200);
+  await new Promise((r) => setTimeout(r, 300));
+  const log = (await db.select().from(schema.usageLogs).where(eq(schema.usageLogs.model, "gpt-test")).orderBy(sql`id desc`).limit(1))[0];
+  // 16 input * $2 + 5 output * $8 + 4 cached * $1 = 76 list, halved
+  assert.equal(log.cost, Math.ceil(76 * 0.5));
+  await db.update(schema.users).set({ groupId: null }).where(eq(schema.users.id, user.id));
+});
+
+await step("A failing channel is auto-disabled, then re-enabled by the maintenance probe once healthy", async () => {
+  await settings({ enabledSources: ["official", "cloud", "reseller"], modelSources: {}, maxAttempts: 3, autoDisableAfter: 2 });
+  await new Promise((r) => setTimeout(r, 10_500));
+  for (let i = 0; i < 2; i++) assert.equal((await post("/v1/chat/completions", { model: "flaky-test", messages: [] })).status, 503);
+  await new Promise((r) => setTimeout(r, 300));
+  const flaky = async () => (await db.select().from(schema.channels).where(eq(schema.channels.name, "flaky")))[0];
+  assert.equal((await flaky()).enabled, false);
+  assert.ok((await flaky()).autoDisabledAt);
+  const cron = () => fetch(`${BASE}/api/cron/maintenance`, { headers: { authorization: `Bearer ${process.env.CRON_SECRET}` } }).then((r) => r.json());
+  assert.equal((await cron()).recovered, 0);
+  mock.heal();
+  assert.equal((await cron()).recovered, 1);
+  assert.equal((await flaky()).enabled, true);
+  assert.equal((await flaky()).autoDisabledAt, null);
+});
+
+await step("Dropping below the low-balance threshold flags the account once", async () => {
+  await db.update(schema.users).set({ balance: 1_000_000, lowBalanceThreshold: 2_000_000, lowBalanceNotifiedAt: null }).where(eq(schema.users.id, user.id));
+  assert.equal((await post("/v1/chat/completions", { model: "gpt-test", messages: [] })).status, 200);
+  await new Promise((r) => setTimeout(r, 500));
+  const [u] = await db.select().from(schema.users).where(eq(schema.users.id, user.id));
+  assert.ok(u.lowBalanceNotifiedAt, "notified");
   logs = (await db.select({ n: sql<number>`count(*)::int` }).from(schema.usageLogs))[0].n;
 });
 
@@ -348,6 +388,8 @@ await step("Paid checkout credits the balance exactly once", async () => {
   const before = await balanceOf();
   assert.equal((await sendEvent("checkout.session.completed", paidSession)).status, 200);
   assert.equal(await balanceOf(), before + 25_000_000);
+  // a top-up re-arms the low-balance email
+  assert.equal((await db.select().from(schema.users).where(eq(schema.users.id, user.id)))[0].lowBalanceNotifiedAt, null);
   assert.equal((await sendEvent("checkout.session.completed", paidSession)).status, 200);
   assert.equal(await balanceOf(), before + 25_000_000);
   await sendEvent("checkout.session.completed", { ...paidSession, id: "cs_e2e_unpaid", payment_status: "unpaid" });

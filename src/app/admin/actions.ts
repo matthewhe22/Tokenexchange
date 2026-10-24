@@ -11,8 +11,10 @@ import { testChannel } from "@/lib/channel-test";
 import { invalidateChannels } from "@/lib/channels";
 import { decrypt, encrypt, generateApiKey, sha256 } from "@/lib/crypto";
 import { usdToMicros } from "@/lib/money";
+import { audit } from "@/lib/audit";
+import { invalidateGroups } from "@/lib/groups";
 import { requireAdmin } from "@/lib/session";
-import { saveLimitSettings, saveRoutingSettings } from "@/lib/settings";
+import { saveLimitSettings, saveRoutingSettings, saveSecuritySettings } from "@/lib/settings";
 import { PROVIDER_INFO } from "@/relay/providers/info";
 
 const str = (f: FormData, k: string) => String(f.get(k) ?? "").trim();
@@ -30,7 +32,7 @@ const list = (v: string) =>
 // ---------- channels ----------
 
 export async function saveChannel(form: FormData) {
-  await requireAdmin();
+  const admin = await requireAdmin();
   const id = num(form, "id", 0);
   const provider = str(form, "provider") as Provider;
   if (!PROVIDERS.includes(provider)) throw new Error("unknown provider");
@@ -74,32 +76,42 @@ export async function saveChannel(form: FormData) {
     costMultiplier: num(form, "costMultiplier", 1),
     enabled: form.get("enabled") === "on",
   };
+  let channelId = id;
   if (id) await db.update(schema.channels).set(values).where(eq(schema.channels.id, id));
-  else await db.insert(schema.channels).values(values);
+  else [{ id: channelId }] = await db.insert(schema.channels).values(values).returning({ id: schema.channels.id });
+  const { credentials: _secret, ...logged } = values;
+  await audit(admin, id ? "channel.update" : "channel.create", `channel:${channelId}`, {
+    ...logged,
+    credentialFields: Object.keys(credentials),
+    credentialsChanged: info.credentialFields.filter((k) => str(form, `cred.${k}`)),
+  });
   invalidateChannels();
   revalidatePath("/admin/channels");
   redirect("/admin/channels");
 }
 
 export async function toggleChannel(form: FormData) {
-  await requireAdmin();
+  const admin = await requireAdmin();
   await getDb()
     .update(schema.channels)
-    .set({ enabled: sql`not ${schema.channels.enabled}` })
+    // A manual toggle takes the channel out of automatic recovery.
+    .set({ enabled: sql`not ${schema.channels.enabled}`, autoDisabledAt: null, failCount: 0 })
     .where(eq(schema.channels.id, num(form, "id", 0)));
+  await audit(admin, "channel.toggle", `channel:${num(form, "id", 0)}`);
   invalidateChannels();
   revalidatePath("/admin/channels");
 }
 
 export async function deleteChannel(form: FormData) {
-  await requireAdmin();
+  const admin = await requireAdmin();
   await getDb().delete(schema.channels).where(eq(schema.channels.id, num(form, "id", 0)));
+  await audit(admin, "channel.delete", `channel:${num(form, "id", 0)}`);
   invalidateChannels();
   redirect("/admin/channels");
 }
 
 export async function runChannelTest(_prev: unknown, form: FormData) {
-  await requireAdmin();
+  const admin = await requireAdmin();
   const id = num(form, "id", 0);
   const [row] = await getDb().select().from(schema.channels).where(eq(schema.channels.id, id));
   if (!row) return { ok: false, status: 0, latencyMs: 0, message: "channel not found" };
@@ -110,7 +122,7 @@ export async function runChannelTest(_prev: unknown, form: FormData) {
 // ---------- prices ----------
 
 export async function savePrice(form: FormData) {
-  await requireAdmin();
+  const admin = await requireAdmin();
   const model = str(form, "model");
   if (!model) throw new Error("model is required");
   const opt = (k: string) => (str(form, k) === "" ? null : num(form, k, 0));
@@ -126,13 +138,15 @@ export async function savePrice(form: FormData) {
     updatedAt: new Date(),
   };
   await getDb().insert(schema.modelPrices).values(values).onConflictDoUpdate({ target: schema.modelPrices.model, set: values });
+  await audit(admin, "price.save", `model:${model}`, values);
   invalidate("prices");
   revalidatePath("/admin/models");
 }
 
 export async function deletePrice(form: FormData) {
-  await requireAdmin();
+  const admin = await requireAdmin();
   await getDb().delete(schema.modelPrices).where(eq(schema.modelPrices.model, str(form, "model")));
+  await audit(admin, "price.delete", `model:${str(form, "model")}`);
   invalidate("prices");
   revalidatePath("/admin/models");
 }
@@ -140,7 +154,7 @@ export async function deletePrice(form: FormData) {
 // ---------- routing ----------
 
 export async function saveRouting(form: FormData) {
-  await requireAdmin();
+  const admin = await requireAdmin();
   const enabledSources = SOURCES.filter((s) => form.get(`source.${s}`) === "on");
   const modelSources: Record<string, Source[]> = {};
   for (const line of str(form, "modelSources").split("\n")) {
@@ -149,30 +163,47 @@ export async function saveRouting(form: FormData) {
     const parsed = list(srcs).filter((s): s is Source => SOURCES.includes(s as Source));
     if (parsed.length) modelSources[model] = parsed;
   }
-  await saveRoutingSettings({
+  const routing = {
     enabledSources,
     modelSources,
     maxAttempts: Math.min(10, Math.max(1, num(form, "maxAttempts", 3))),
     autoDisableAfter: Math.max(0, Math.floor(num(form, "autoDisableAfter", 0))),
     affinity: form.get("affinity") === "on",
     allowConversion: form.get("allowConversion") === "on",
-  });
+  };
+  await saveRoutingSettings(routing);
+  await audit(admin, "settings.routing", null, routing);
   revalidatePath("/admin/settings");
 }
 
 export async function saveLimits(form: FormData) {
-  await requireAdmin();
-  await saveLimitSettings({
+  const admin = await requireAdmin();
+  const limits = {
     defaultKeyRpm: Math.max(0, Math.floor(num(form, "defaultKeyRpm", 0))),
     userRpm: Math.max(0, Math.floor(num(form, "userRpm", 0))),
-  });
+  };
+  await saveLimitSettings(limits);
+  await audit(admin, "settings.limits", null, limits);
+  revalidatePath("/admin/settings");
+}
+
+export async function saveSecurity(form: FormData) {
+  const admin = await requireAdmin();
+  const security = {
+    requireAdmin2fa: form.get("requireAdmin2fa") === "on",
+    lowBalanceDefault: usdToMicros(Math.max(0, num(form, "lowBalanceDefault", 0))),
+  };
+  // Never lock the current admin out: they must have 2FA before requiring it.
+  if (security.requireAdmin2fa && !admin.totpEnabledAt) redirect("/dashboard/account?require2fa=1");
+  await saveSecuritySettings(security);
+  await audit(admin, "settings.security", null, security);
   revalidatePath("/admin/settings");
 }
 
 // ---------- users & keys ----------
 
 export async function createUser(form: FormData) {
-  await requireAdmin();
+  const admin = await requireAdmin();
   const email = str(form, "email").toLowerCase();
   if (!email.includes("@")) throw new Error("valid email required");
   const password = str(form, "password");
@@ -185,6 +216,7 @@ export async function createUser(form: FormData) {
       .values({ email, role, balance, passwordHash: password ? await bcrypt.hash(password, 10) : null, emailVerifiedAt: new Date() })
       .returning();
     if (balance) await tx.insert(schema.balanceTransactions).values({ userId: user.id, amount: balance, type: "adjust", note: "initial balance" });
+    await audit(admin, "user.create", `user:${user.id}`, { email, role, balance });
   });
   revalidatePath("/admin/users");
 }
@@ -195,7 +227,10 @@ export async function adjustBalance(form: FormData) {
   const amount = usdToMicros(num(form, "amount", 0));
   if (!amount) return;
   await getDb().transaction(async (tx) => {
-    await tx.update(schema.users).set({ balance: sql`${schema.users.balance} + ${amount}` }).where(eq(schema.users.id, userId));
+    await tx
+      .update(schema.users)
+      .set({ balance: sql`${schema.users.balance} + ${amount}`, ...(amount > 0 ? { lowBalanceNotifiedAt: null } : {}) })
+      .where(eq(schema.users.id, userId));
     await tx.insert(schema.balanceTransactions).values({
       userId,
       amount,
@@ -203,19 +238,21 @@ export async function adjustBalance(form: FormData) {
       note: `${str(form, "note") || "manual adjustment"} (by ${admin.email})`,
     });
   });
+  await audit(admin, "user.adjust_balance", `user:${userId}`, { amount, note: str(form, "note") });
   revalidatePath(`/admin/users/${userId}`);
   revalidatePath("/admin/users");
 }
 
 export async function toggleUser(form: FormData) {
-  await requireAdmin();
+  const admin = await requireAdmin();
   const userId = num(form, "userId", 0);
   await getDb().update(schema.users).set({ disabled: sql`not ${schema.users.disabled}` }).where(eq(schema.users.id, userId));
+  await audit(admin, "user.toggle", `user:${userId}`);
   revalidatePath(`/admin/users/${userId}`);
 }
 
 export async function createKey(_prev: unknown, form: FormData): Promise<{ key?: string; error?: string }> {
-  await requireAdmin();
+  const admin = await requireAdmin();
   const userId = num(form, "userId", 0);
   const key = generateApiKey();
   const quota = str(form, "quota");
@@ -234,22 +271,60 @@ export async function createKey(_prev: unknown, form: FormData): Promise<{ key?:
       expiresAt: expires ? new Date(expires) : null,
       rpmLimit: rpm ? Math.max(0, Math.floor(Number(rpm))) : null,
     });
+  await audit(admin, "key.create", `user:${userId}`, { prefix: key.slice(0, 12), quota, models, rpm });
   revalidatePath(`/admin/users/${userId}`);
   return { key };
 }
 
 export async function toggleKey(form: FormData) {
-  await requireAdmin();
+  const admin = await requireAdmin();
   const [row] = await getDb()
     .update(schema.apiKeys)
     .set({ enabled: sql`not ${schema.apiKeys.enabled}` })
     .where(eq(schema.apiKeys.id, num(form, "id", 0)))
     .returning();
+  if (row) await audit(admin, "key.toggle", `key:${row.id}`, { enabled: row.enabled });
   if (row) revalidatePath(`/admin/users/${row.userId}`);
 }
 
 export async function deleteKey(form: FormData) {
-  await requireAdmin();
+  const admin = await requireAdmin();
   const [row] = await getDb().delete(schema.apiKeys).where(eq(schema.apiKeys.id, num(form, "id", 0))).returning();
+  if (row) await audit(admin, "key.delete", `key:${row.id}`, { prefix: row.keyPrefix });
   if (row) revalidatePath(`/admin/users/${row.userId}`);
+}
+
+// ---------- pricing groups ----------
+
+export async function saveGroup(form: FormData) {
+  const admin = await requireAdmin();
+  const id = num(form, "id", 0);
+  const values = {
+    name: str(form, "name"),
+    multiplier: Math.max(0, num(form, "multiplier", 1)),
+    description: str(form, "description") || null,
+  };
+  if (!values.name) throw new Error("name is required");
+  if (id) await getDb().update(schema.pricingGroups).set(values).where(eq(schema.pricingGroups.id, id));
+  else await getDb().insert(schema.pricingGroups).values(values);
+  await audit(admin, id ? "group.update" : "group.create", id ? `group:${id}` : null, values);
+  invalidateGroups();
+  revalidatePath("/admin/groups");
+}
+
+export async function deleteGroup(form: FormData) {
+  const admin = await requireAdmin();
+  await getDb().delete(schema.pricingGroups).where(eq(schema.pricingGroups.id, num(form, "id", 0)));
+  await audit(admin, "group.delete", `group:${num(form, "id", 0)}`);
+  invalidateGroups();
+  revalidatePath("/admin/groups");
+}
+
+export async function setUserGroup(form: FormData) {
+  const admin = await requireAdmin();
+  const userId = num(form, "userId", 0);
+  const groupId = num(form, "groupId", 0) || null;
+  await getDb().update(schema.users).set({ groupId }).where(eq(schema.users.id, userId));
+  await audit(admin, "user.set_group", `user:${userId}`, { groupId });
+  revalidatePath(`/admin/users/${userId}`);
 }

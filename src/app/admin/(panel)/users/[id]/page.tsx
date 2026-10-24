@@ -3,13 +3,14 @@ import { notFound } from "next/navigation";
 import { getDb, schema } from "@/db";
 import { CreateKeyForm } from "@/components/create-key-form";
 import { formatUsd } from "@/lib/money";
-import { adjustBalance, deleteKey, toggleKey, toggleUser } from "../../../actions";
+import { adjustBalance, deleteKey, setUserGroup, toggleKey, toggleUser } from "../../../actions";
 
 export default async function UserPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const db = getDb();
   const [user] = await db.select().from(schema.users).where(eq(schema.users.id, Number(id)));
   if (!user) notFound();
+  const groups = await db.select().from(schema.pricingGroups);
   const keys = await db.select().from(schema.apiKeys).where(eq(schema.apiKeys.userId, user.id)).orderBy(desc(schema.apiKeys.id));
   const txs = await db
     .select()
@@ -33,6 +34,18 @@ export default async function UserPage({ params }: { params: Promise<{ id: strin
           </form>
         </div>
       </div>
+
+      <h2>Pricing group</h2>
+      <form action={setUserGroup} className="card row">
+        <input type="hidden" name="userId" value={user.id} />
+        <select name="groupId" defaultValue={user.groupId ?? 0} style={{ maxWidth: 320 }}>
+          <option value={0}>Standard pricing</option>
+          {groups.map((g) => (
+            <option key={g.id} value={g.id}>{g.name} (× {g.multiplier})</option>
+          ))}
+        </select>
+        <button className="secondary">Save group</button>
+      </form>
 
       <h2>Adjust balance</h2>
       <form action={adjustBalance} className="card form-grid">

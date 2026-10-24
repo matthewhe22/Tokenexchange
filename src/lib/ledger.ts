@@ -17,7 +17,8 @@ export async function applyBalanceChange(e: { userId: number; amount: number; ty
     if (!inserted.length) return false;
     await tx
       .update(schema.users)
-      .set({ balance: sql`${schema.users.balance} + ${e.amount}` })
+      // A top-up re-arms the low-balance email.
+      .set({ balance: sql`${schema.users.balance} + ${e.amount}`, ...(e.amount > 0 ? { lowBalanceNotifiedAt: null } : {}) })
       .where(eq(schema.users.id, e.userId));
     return true;
   });

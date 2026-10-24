@@ -16,6 +16,15 @@ import { PROVIDERS, SOURCES, type Provider, type Source } from "./enums";
 // All money columns are integer micro-USD: 1 USD = 1_000_000.
 // A price of $X per 1M tokens therefore costs exactly X micro-USD per token.
 
+// Customer tiers (e.g. "wholesale", "vip"): every price for members is multiplied by `multiplier`.
+export const pricingGroups = pgTable("pricing_groups", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull().unique(),
+  multiplier: doublePrecision("multiplier").notNull().default(1),
+  description: text("description"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
   email: text("email").notNull().unique(),
@@ -27,6 +36,15 @@ export const users = pgTable("users", {
   emailVerifiedAt: timestamp("email_verified_at", { withTimezone: true }),
   // Bumped on password change/reset; sessions signed with an older version are rejected.
   sessionVersion: integer("session_version").notNull().default(0),
+  groupId: integer("group_id").references(() => pricingGroups.id, { onDelete: "set null" }),
+  // TOTP two-factor auth. The secret is encrypted; it is enabled only once a code has been confirmed.
+  totpSecret: text("totp_secret"),
+  totpEnabledAt: timestamp("totp_enabled_at", { withTimezone: true }),
+  // Last accepted 30-second step, so a code cannot be replayed.
+  totpLastStep: bigint("totp_last_step", { mode: "number" }),
+  // Send a low-balance email when the balance falls below this (micro-USD); null = site default, 0 = off.
+  lowBalanceThreshold: bigint("low_balance_threshold", { mode: "number" }),
+  lowBalanceNotifiedAt: timestamp("low_balance_notified_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -79,6 +97,8 @@ export const channels = pgTable("channels", {
   failCount: integer("fail_count").notNull().default(0),
   lastError: text("last_error"),
   lastErrorAt: timestamp("last_error_at", { withTimezone: true }),
+  // Set when the gateway (not an admin) disabled the channel; such channels are probed and re-enabled.
+  autoDisabledAt: timestamp("auto_disabled_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -181,3 +201,19 @@ export const rateLimits = pgTable("rate_limits", {
   windowStart: bigint("window_start", { mode: "number" }).notNull(),
   count: integer("count").notNull(),
 });
+
+// Who changed what in the admin console. Credentials are never written here.
+export const auditLogs = pgTable(
+  "audit_logs",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    actorId: integer("actor_id"),
+    actorEmail: text("actor_email"),
+    action: text("action").notNull(),
+    target: text("target"),
+    details: jsonb("details"),
+    ip: text("ip"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("audit_logs_created_idx").on(t.createdAt)],
+);

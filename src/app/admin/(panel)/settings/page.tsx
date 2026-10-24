@@ -1,6 +1,7 @@
 import { SOURCES } from "@/db/enums";
-import { getLimitSettings, getRoutingSettings } from "@/lib/settings";
-import { saveLimits, saveRouting } from "../../actions";
+import { MICROS_PER_USD } from "@/lib/money";
+import { getLimitSettings, getRoutingSettings, getSecuritySettings } from "@/lib/settings";
+import { saveLimits, saveRouting, saveSecurity } from "../../actions";
 
 const SOURCE_HELP: Record<string, string> = {
   official: "Direct accounts with OpenAI, Anthropic, Google",
@@ -9,7 +10,7 @@ const SOURCE_HELP: Record<string, string> = {
 };
 
 export default async function SettingsPage() {
-  const [routing, limits] = await Promise.all([getRoutingSettings(), getLimitSettings()]);
+  const [routing, limits, security] = await Promise.all([getRoutingSettings(), getLimitSettings(), getSecuritySettings()]);
   return (
     <>
       <h1>Routing</h1>
@@ -66,6 +67,21 @@ export default async function SettingsPage() {
           <input name="userRpm" type="number" min={0} defaultValue={limits.userRpm} />
         </div>
         <div><button>Save limits</button></div>
+      </form>
+      <h1 style={{ marginTop: 32 }}>Security &amp; notifications</h1>
+      <form action={saveSecurity} className="card" style={{ display: "grid", gap: 12 }}>
+        <div className="row">
+          <input id="requireAdmin2fa" type="checkbox" name="requireAdmin2fa" defaultChecked={security.requireAdmin2fa} />
+          <label htmlFor="requireAdmin2fa" style={{ margin: 0, color: "inherit" }}>
+            <strong>Require two-factor authentication for admins</strong>{" "}
+            <span className="muted">— turn it on for your own account first (Account page)</span>
+          </label>
+        </div>
+        <div style={{ maxWidth: 320 }}>
+          <label>Default low-balance email threshold in USD (0 = off; users can change their own)</label>
+          <input name="lowBalanceDefault" type="number" min={0} step="any" defaultValue={security.lowBalanceDefault / MICROS_PER_USD} />
+        </div>
+        <div><button>Save security settings</button></div>
       </form>
       <p className="muted">
         Changes reach every serverless instance within about 10 seconds. Counters use Upstash Redis when

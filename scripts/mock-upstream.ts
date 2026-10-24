@@ -27,8 +27,9 @@ const anthropicEvents = (text: string): [string, unknown][] => [
 
 const anthropicJson = { id: "msg_1", type: "message", role: "assistant", content: [{ type: "text", text: "pong" }], usage: { input_tokens: 11, output_tokens: 7 } };
 
-export function startMockUpstream(port: number): Promise<{ received: Received[]; close: () => void }> {
+export function startMockUpstream(port: number): Promise<{ received: Received[]; close: () => void; heal: () => void }> {
   const received: Received[] = [];
+  let flakyHealed = false;
   const server = createServer(async (req, res) => {
     let raw = "";
     for await (const c of req) raw += c;
@@ -60,6 +61,11 @@ export function startMockUpstream(port: number): Promise<{ received: Received[];
       res.write('{"choices":');
       setTimeout(() => res.destroy(), 50);
       return;
+    }
+
+    if (path === "/flaky/v1/chat/completions") {
+      if (!flakyHealed) return json(500, { error: { message: "flaky upstream down" } });
+      return json(200, { choices: [{ message: { content: "ok" } }], usage: { prompt_tokens: 1, completion_tokens: 1 } });
     }
 
     if (path === "/slow/v1/chat/completions") {
@@ -142,5 +148,7 @@ export function startMockUpstream(port: number): Promise<{ received: Received[];
 
     json(404, { error: `mock: no route for ${path}` });
   });
-  return new Promise((resolve) => server.listen(port, () => resolve({ received, close: () => server.close() })));
+  return new Promise((resolve) =>
+    server.listen(port, () => resolve({ received, close: () => server.close(), heal: () => (flakyHealed = true) })),
+  );
 }

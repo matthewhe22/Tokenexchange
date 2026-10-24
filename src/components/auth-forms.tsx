@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useActionState } from "react";
-import { login, requestPasswordReset, resetPassword, signup } from "@/app/(site)/auth-actions";
+import { login, requestPasswordReset, resetPassword, signup, verifyTwoFactor } from "@/app/(site)/auth-actions";
 import { Turnstile } from "./turnstile";
 
 function Status({ state }: { state?: { error?: string; message?: string } }) {
@@ -83,6 +83,35 @@ export function ResetPasswordForm({ token }: { token: string }) {
       </div>
       <Status state={state} />
       <button disabled={pending}>Set new password</button>
+    </form>
+  );
+}
+
+export function OAuthButtons({ providers, next }: { providers: { id: string; label: string }[]; next?: string }) {
+  if (!providers.length) return null;
+  return (
+    <div className="auth-form" style={{ marginBottom: 16 }}>
+      {providers.map((p) => (
+        <a key={p.id} className="btn btn-ghost" style={{ textAlign: "center" }} href={`/api/auth/${p.id}/start${next ? `?next=${encodeURIComponent(next)}` : ""}`}>
+          Continue with {p.label}
+        </a>
+      ))}
+      <div className="muted" style={{ textAlign: "center", fontSize: 12 }}>or use your email</div>
+    </div>
+  );
+}
+
+export function TwoFactorForm({ next }: { next?: string }) {
+  const [state, action, pending] = useActionState(verifyTwoFactor, undefined);
+  return (
+    <form action={action} className="auth-form">
+      <input type="hidden" name="next" value={next ?? ""} />
+      <div>
+        <label htmlFor="code">6-digit code from your authenticator app</label>
+        <input id="code" name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9 ]{6,7}" required autoFocus />
+      </div>
+      <Status state={state} />
+      <button disabled={pending}>Verify</button>
     </form>
   );
 }

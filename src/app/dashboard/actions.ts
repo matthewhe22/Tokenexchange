@@ -5,7 +5,8 @@ import { and, count, eq, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getDb, schema } from "@/db";
-import { generateApiKey, sha256 } from "@/lib/crypto";
+import { decrypt, encrypt, generateApiKey, sha256 } from "@/lib/crypto";
+import { generateTotpSecret, verifyTotp } from "@/lib/totp";
 import { usdToMicros } from "@/lib/money";
 import { bumpSessionVersion, createSession, requireUser } from "@/lib/session";
 import { createTopupCheckout, stripeEnabled } from "@/lib/stripe";
@@ -82,4 +83,42 @@ export async function signOutEverywhere() {
   const user = await requireUser();
   await bumpSessionVersion(user.id);
   redirect("/login");
+}
+
+// ---------- two-factor auth ----------
+
+export async function startTotpSetup() {
+  const user = await requireUser();
+  if (user.totpEnabledAt) return;
+  await getDb().update(schema.users).set({ totpSecret: encrypt(generateTotpSecret()), totpLastStep: null }).where(eq(schema.users.id, user.id));
+  revalidatePath("/dashboard/account");
+}
+
+export async function confirmTotp(_prev: unknown, form: FormData): Promise<{ error?: string; message?: string }> {
+  const user = await requireUser();
+  if (!user.totpSecret || user.totpEnabledAt) return { error: "Start the setup again." };
+  const step = verifyTotp(decrypt(user.totpSecret), str(form, "code"), null);
+  if (step == null) return { error: "That code is not valid. Check the time on your phone and try again." };
+  await getDb().update(schema.users).set({ totpEnabledAt: new Date(), totpLastStep: step }).where(eq(schema.users.id, user.id));
+  revalidatePath("/dashboard/account");
+  return { message: "Two-factor authentication is on." };
+}
+
+export async function disableTotp(_prev: unknown, form: FormData): Promise<{ error?: string; message?: string }> {
+  const user = await requireUser();
+  if (!user.totpSecret || !user.totpEnabledAt) return { error: "Two-factor authentication is not enabled." };
+  if (verifyTotp(decrypt(user.totpSecret), str(form, "code"), user.totpLastStep) == null) return { error: "That code is not valid." };
+  await getDb().update(schema.users).set({ totpSecret: null, totpEnabledAt: null, totpLastStep: null }).where(eq(schema.users.id, user.id));
+  revalidatePath("/dashboard/account");
+  return { message: "Two-factor authentication is off." };
+}
+
+// ---------- notifications ----------
+
+export async function saveLowBalanceAlert(form: FormData) {
+  const user = await requireUser();
+  const raw = str(form, "threshold");
+  const threshold = raw === "" ? null : usdToMicros(Math.max(0, Number(raw) || 0));
+  await getDb().update(schema.users).set({ lowBalanceThreshold: threshold, lowBalanceNotifiedAt: null }).where(eq(schema.users.id, user.id));
+  revalidatePath("/dashboard/account");
 }

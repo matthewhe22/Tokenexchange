@@ -95,7 +95,9 @@ npx tsx scripts/e2e.ts          # end-to-end against mock upstreams (truncates e
    - Generate `ENCRYPTION_KEY` with `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`.
    - **Do not change `ENCRYPTION_KEY` after deploying**, or the stored upstream credentials can no longer be decrypted.
 3. Import this repository into Vercel. The framework is detected as Next.js automatically.
-4. Run migrations and seed once from your machine:
+4. Migrations and the first admin are applied by the Vercel build itself (`vercel-build` runs `db:migrate`,
+   then `db:seed`, then `next build`). Set `ADMIN_EMAIL` / `ADMIN_PASSWORD` (12+ characters) for the first deploy;
+   you can delete them afterwards. To run them by hand instead:
    `DATABASE_URL_UNPOOLED=… ADMIN_EMAIL=… ADMIN_PASSWORD=… npm run db:migrate && npm run db:seed`
 5. **Stripe webhook**: in the Stripe dashboard, add an endpoint at `https://<your-domain>/api/stripe/webhook` that sends these events:
    - `checkout.session.completed`

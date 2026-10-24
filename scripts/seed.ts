@@ -29,7 +29,13 @@ const EXAMPLE_PRICES: (typeof schema.modelPrices.$inferInsert)[] = [
 const url = process.env.DATABASE_URL_UNPOOLED ?? process.env.DATABASE_URL;
 const email = process.env.ADMIN_EMAIL?.toLowerCase();
 const password = process.env.ADMIN_PASSWORD;
-if (!url || !email || !password) throw new Error("DATABASE_URL, ADMIN_EMAIL and ADMIN_PASSWORD are required");
+if (!url) throw new Error("DATABASE_URL is required");
+if (!email || !password) {
+  // Lets the Vercel build run seed on every deploy; once the admin exists the variables can be removed.
+  console.log("ADMIN_EMAIL / ADMIN_PASSWORD not set; skipping seed");
+  process.exit(0);
+}
+if (password.length < 12) throw new Error("ADMIN_PASSWORD must be at least 12 characters");
 
 const client = postgres(url, { max: 1 });
 const db = drizzle(client, { schema });

@@ -11,7 +11,8 @@
     "test": "vitest run",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx scripts/migrate.ts",
-    "db:seed": "tsx scripts/seed.ts"
+    "db:seed": "tsx scripts/seed.ts",
+    "vercel-build": "npm run db:migrate && npm run db:seed && next build"
   },
   "dependencies": {
     "@vercel/functions": "^3.10.3",

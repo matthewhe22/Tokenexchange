@@ -181,7 +181,7 @@ export function startMockUpstream(port: number): Promise<{ received: Received[];
 
     if (path === "/anthropic/v1/messages/batches" && req.method === "POST") {
       if (req.headers["x-api-key"] !== "up-anthropic") return json(401, { type: "error", error: { type: "authentication_error", message: "bad key" } });
-      if (!body.requests?.every((r: any) => r.params?.max_tokens && r.params.model === "claude-up" && !r.params.stream)) {
+      if (!body.requests?.every((r: any) => r.params?.max_tokens && r.params.model.startsWith("claude-up") && !r.params.stream)) {
         return json(400, { type: "error", error: { type: "invalid_request_error", message: "bad requests" } });
       }
       const id = `msgbatch_up${++seq}`;
@@ -195,7 +195,7 @@ export function startMockUpstream(port: number): Promise<{ received: Received[];
       if (ab[2] === "/results") {
         res.writeHead(200, { "content-type": "application/x-jsonl" });
         for (const l of b.lines) {
-          res.write(JSON.stringify({ custom_id: l.custom_id, result: { type: "succeeded", message: { ...anthropicJson, model: l.body.model, usage: { input_tokens: 200, output_tokens: 20 } } } }) + "\n");
+          res.write(JSON.stringify({ custom_id: l.custom_id, result: { type: "succeeded", message: { ...anthropicJson, model: `${l.body.model}-20260101`, usage: { input_tokens: 200, output_tokens: 20 } } } }) + "\n");
         }
         return res.end();
       }

@@ -52,6 +52,7 @@ await db.insert(schema.modelPrices).values([
   { model: "flex-test", inputPrice: 2, outputPrice: 8, flexMarkup: 0.8 },
   { model: "gpt-batch", inputPrice: 2, outputPrice: 8, batchMarkup: 0.8 },
   { model: "claude-batch", inputPrice: 3, outputPrice: 15, batchMarkup: 0.8 },
+  { model: "claude-batch-big", inputPrice: 15, outputPrice: 75, batchMarkup: 0.8 },
   { model: "ptu-test", inputPrice: 1, outputPrice: 1 },
 ]);
 
@@ -66,7 +67,7 @@ await db.insert(schema.channels).values([
   channel({ name: "openai official", provider: "openai", source: "official", baseUrl: `${MOCK}/openai/v1`, credentials: { apiKey: "up-openai" }, models: ["gpt-test", "embed-test", "tier-test", "dalle-test", "tts-test", "whisper-test", "flex-test", "gpt-batch", "ptu-test"], modelMapping: { "gpt-test": "gpt-upstream", "whisper-test": "whisper-upstream", "gpt-batch": "gpt-4o-batch-up" }, costMultiplier: 0.9 }),
   // committed capacity that is always full: traffic spills to the pay-as-you-go channel above
   channel({ name: "ptu", provider: "azure_openai", source: "cloud", baseUrl: `${MOCK}/ptu/v1`, credentials: { apiKey: "up-azure" }, models: ["ptu-test"], priority: 10, fixedCostHourly: 1, capacityTpm: 1000 }),
-  channel({ name: "anthropic official", provider: "anthropic", source: "official", baseUrl: `${MOCK}/anthropic`, credentials: { apiKey: "up-anthropic" }, models: ["claude-batch"], modelMapping: { "claude-batch": "claude-up" } }),
+  channel({ name: "anthropic official", provider: "anthropic", source: "official", baseUrl: `${MOCK}/anthropic`, credentials: { apiKey: "up-anthropic" }, models: ["claude-batch", "claude-batch-big"], modelMapping: { "claude-batch": "claude-up", "claude-batch-big": "claude-up-big" } }),
   channel({ name: "reranker", provider: "openai_compatible", source: "reseller", baseUrl: `${MOCK}/openai/v1`, credentials: { apiKey: "up-openai" }, models: ["rerank-test"] }),
   channel({ name: "creditless", provider: "anthropic_compatible", source: "reseller", baseUrl: `${MOCK}/creditless`, credentials: { apiKey: "x" }, models: ["fault-test"], priority: 9 }),
   channel({ name: "azure", provider: "azure_openai", source: "cloud", baseUrl: `${MOCK}/azure/openai/v1`, credentials: { apiKey: "up-azure" }, models: ["azure-test"] }),
@@ -82,6 +83,9 @@ await db.insert(schema.channels).values([
 const [user] = await db.insert(schema.users).values({ email: "buyer@example.com", balance: 1_000_000 }).returning();
 const key = generateApiKey();
 await db.insert(schema.apiKeys).values({ userId: user.id, name: "e2e", keyHash: sha256(key), keyPrefix: key.slice(0, 12) });
+
+// The app caches channels, prices and settings for ~10s; let anything left from a previous run expire.
+await new Promise((r) => setTimeout(r, 10_500));
 
 const post = (path: string, body: unknown, headers: Record<string, string> = { authorization: `Bearer ${key}` }) =>
   fetch(BASE + path, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
@@ -586,6 +590,40 @@ await step("Anthropic message batch: create, poll, bill, results, delete", async
 
   res = await fetch(`${BASE}/v1/messages/batches/${created.id}`, { method: "DELETE", headers: { "x-api-key": key } });
   assert.equal((await res.json()).type, "message_batch_deleted");
+});
+
+await step("A mixed-model Anthropic batch bills each request at its own model, even when results report dated ids", async () => {
+  const before = await balanceOfUser();
+  const res = await post(
+    "/v1/messages/batches",
+    {
+      requests: [
+        // cheap model first: billing must not fall back to it
+        { custom_id: "cheap", params: { model: "claude-batch", max_tokens: 100, messages: [{ role: "user", content: "hi" }] } },
+        { custom_id: "big", params: { model: "claude-batch-big", max_tokens: 100, messages: [{ role: "user", content: "hi" }] } },
+      ],
+    },
+    { "x-api-key": key },
+  );
+  assert.equal(res.status, 200, await res.clone().text());
+  const { id } = await res.json();
+  await fetch(`${BASE}/v1/messages/batches/${id}`, { headers: { "x-api-key": key } });
+  logs += 2;
+  const rows = await db.select().from(schema.usageLogs).orderBy(sql`id desc`).limit(2);
+  const cost = Object.fromEntries(rows.map((r) => [r.model, r.cost]));
+  // 200 in + 20 out each: 900 list x 0.8 = 720; 4500 list x 0.8 = 3600
+  assert.deepEqual(cost, { "claude-batch": 720, "claude-batch-big": 3600 });
+  assert.equal(await balanceOfUser(), before - 4320);
+  const results = (await (await fetch(`${BASE}/v1/messages/batches/${id}/results`, { headers: { "x-api-key": key } })).text()).trim().split("\n").map((l) => JSON.parse(l));
+  assert.deepEqual(Object.fromEntries(results.map((r) => [r.custom_id, r.result.message.model])), { cheap: "claude-batch", big: "claude-batch-big" });
+});
+
+await step("Batch input files with NUL bytes are rejected", async () => {
+  const form = new FormData();
+  form.set("purpose", "batch");
+  form.set("file", new Blob(['{"custom_id":"a\u0000"}']), "bad.jsonl");
+  const res = await fetch(`${BASE}/v1/files`, { method: "POST", headers: { authorization: `Bearer ${key}` }, body: form });
+  assert.equal(res.status, 400);
 });
 
 await step("Batches are refused for models without a batch price", async () => {

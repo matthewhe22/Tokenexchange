@@ -294,6 +294,8 @@ export const batches = pgTable(
     // Per-request endpoint, e.g. /v1/chat/completions or /v1/messages
     endpoint: text("endpoint").notNull(),
     models: text("models").array().notNull(),
+    // custom_id -> public model, for batches that mix models (results are billed and renamed by it)
+    requestModels: jsonb("request_models").$type<Record<string, string>>(),
     channelId: integer("channel_id"),
     upstreamId: text("upstream_id"),
     inputFileId: text("input_file_id"),

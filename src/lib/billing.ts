@@ -55,14 +55,16 @@ export function listCost(usage: Usage, price: ModelPrice): number {
 
 export interface ChannelCost {
   costMultiplier: number;
-  /** Committed-capacity channels have no marginal cost per request. */
+  /** Committed-capacity channels have no marginal cost per request while the commitment runs. */
   fixedCostHourly?: number | null;
+  commitmentEndsAt?: Date | null;
 }
 
 export function chargeFor(usage: Usage, price: ModelPrice, channel: ChannelCost, tier: Tier = "standard") {
   const list = listCost(usage, price);
   const f = tierFactors(price, tier) ?? tierFactors(price, "standard")!;
-  const upstreamCost = channel.fixedCostHourly != null ? 0 : Math.round(list * f.list * channel.costMultiplier);
+  const committed = channel.fixedCostHourly != null && (channel.commitmentEndsAt == null || channel.commitmentEndsAt > new Date());
+  const upstreamCost = committed ? 0 : Math.round(list * f.list * channel.costMultiplier);
   return { cost: Math.ceil(list * f.sell), upstreamCost };
 }
 

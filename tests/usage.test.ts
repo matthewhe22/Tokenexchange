@@ -68,6 +68,9 @@ describe("chargeFor", () => {
   it("has no marginal upstream cost on committed-capacity channels", () => {
     const u = { input: 1000, output: 0, cacheRead: 0, cacheWrite: 0 };
     expect(chargeFor(u, price, { costMultiplier: 1, fixedCostHourly: 5 }).upstreamCost).toBe(0);
+    expect(chargeFor(u, price, { costMultiplier: 1, fixedCostHourly: 5, commitmentEndsAt: new Date(Date.now() + 60_000) }).upstreamCost).toBe(0);
+    // after the commitment ends the channel is pay-as-you-go again
+    expect(chargeFor(u, price, { costMultiplier: 1, fixedCostHourly: 5, commitmentEndsAt: new Date(Date.now() - 60_000) }).upstreamCost).toBe(3000);
   });
 });
 

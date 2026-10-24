@@ -89,9 +89,13 @@ async function spillFullChannels(candidates: Candidate[]): Promise<Candidate[]> 
   return [...candidates.filter((c) => !full.has(c.ch.id)), ...candidates.filter((c) => full.has(c.ch.id))];
 }
 
-/** Tier to bill: what an OpenAI upstream says it ran on, else what was requested. */
-function billedTier(ctx: Ctx, target: Protocol | undefined, reported: unknown): Tier {
-  const tier = (target === "openai-chat" || target === "openai-responses" ? reportedTier(reported) : null) ?? ctx.tier;
+/**
+ * Tier to bill: what an official OpenAI upstream says it ran on, else what was requested. Other
+ * channels (resellers, Azure) cannot run OpenAI's tiers, so whatever they report is ignored.
+ */
+function billedTier(ctx: Ctx, ch: LoadedChannel, target: Protocol | undefined, reported: unknown): Tier {
+  const openai = ch.provider === "openai" && (target === "openai-chat" || target === "openai-responses");
+  const tier = (openai ? reportedTier(reported) : null) ?? ctx.tier;
   return tierFactors(ctx.price, tier) ? tier : "standard";
 }
 
@@ -334,7 +338,7 @@ async function forward(ctx: Ctx, candidates: Candidate[], autoDisableAfter: numb
             ? usageFromBody(target, json)
             : null;
       // Never fail a successful upstream call because bookkeeping failed; settle() logs and retries.
-      const tier = billedTier(ctx, target, json?.service_tier);
+      const tier = billedTier(ctx, ch, target, json?.service_tier);
       await settle(ctx, ch, res.status, usage, usage ? undefined : "no usage in upstream response", tier);
       if (conv) {
         if (!json) throw new Error("upstream returned a non-JSON body for a translated request");
@@ -354,7 +358,7 @@ async function forward(ctx: Ctx, candidates: Candidate[], autoDisableAfter: numb
         parser.end();
         const usage = tracker.result();
         const message = error ? String(error instanceof Error ? error.message : error) : usage ? undefined : "no usage in stream";
-        await settle(ctx, ch, 200, usage, message, billedTier(ctx, target, tracker.serviceTier));
+        await settle(ctx, ch, 200, usage, message, billedTier(ctx, ch, target, tracker.serviceTier));
       },
     );
     const out = conv ? tapped.pipeThrough(conv.stream(model, ctx.req.body?.stream_options?.include_usage === true)) : tapped;

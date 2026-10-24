@@ -213,6 +213,7 @@ export async function createBatch(c: CreateBatch): Promise<BatchRow | Response> 
       api: c.api,
       endpoint: c.endpoint,
       models,
+      requestModels: models.length > 1 ? Object.fromEntries(c.items.map((i) => [i.customId, i.model])) : null,
       inputFileId: c.inputFileId ?? null,
       requestCount: c.items.length,
       status: c.api === "openai" ? "validating" : "in_progress",
@@ -289,19 +290,28 @@ function entryFor(row: BatchRow, ch: LoadedChannel | null, model: string, usage:
 
 // ---------- polling and settlement ----------
 
-/** Upstream model id -> public name, for this batch on this channel. */
-function publicNames(row: BatchRow, ch: LoadedChannel): Map<string, string> {
-  const out = new Map<string, string>();
-  for (const m of row.models) out.set(ch.modelMapping[m] ?? m, m);
-  return out;
+/**
+ * Public model of one result line, found by its custom_id. Upstreams may report a resolved model
+ * id (an alias as a dated snapshot), so the model in the result itself is not trusted.
+ */
+function modelOfLine(row: BatchRow, customId: unknown): string | null {
+  if (row.models.length === 1) return row.models[0];
+  return typeof customId === "string" ? (row.requestModels?.[customId] ?? null) : null;
 }
 
 /** Brings a batch up to date with the upstream and bills it once it has ended. */
 export async function refreshBatch(row: BatchRow, force = false): Promise<BatchRow> {
   if (row.settledAt || !row.upstreamId || row.channelId == null) return row;
-  const ch = await loadChannel(row.channelId);
-  if (!ch) return row;
   const db = getDb();
+  // Every attempt is stamped, so the maintenance job (oldest attempt first) cycles through all
+  // batches instead of retrying the same stuck ones.
+  const stamp = () => db.update(schema.batches).set({ lastPolledAt: new Date() }).where(eq(schema.batches.id, row.id));
+  const ch = await loadChannel(row.channelId);
+  if (!ch) {
+    console.error(`batch ${row.id}: channel ${row.channelId} no longer exists; it cannot be billed`);
+    await stamp();
+    return row;
+  }
   if (force || !isTerminal(row) || !row.lastPolledAt) {
     if (force || !row.lastPolledAt || Date.now() - row.lastPolledAt.getTime() >= POLL_EVERY_MS) {
       try {
@@ -313,11 +323,17 @@ export async function refreshBatch(row: BatchRow, force = false): Promise<BatchR
           .returning();
       } catch (err) {
         console.error(`batch ${row.id}: refresh failed`, err);
+        await stamp();
         return row;
       }
     }
   }
-  if (isTerminal(row)) await settleBatch(row, ch).catch((err) => console.error(`batch ${row.id}: settlement failed`, err));
+  if (isTerminal(row)) {
+    await settleBatch(row, ch).catch(async (err) => {
+      console.error(`batch ${row.id}: settlement failed`, err);
+      await stamp();
+    });
+  }
   const [fresh] = await db.select().from(schema.batches).where(eq(schema.batches.id, row.id));
   return fresh ?? row;
 }
@@ -339,7 +355,6 @@ async function settleBatch(row: BatchRow, ch: LoadedChannel): Promise<void> {
   if (!claimed.length) return;
 
   const protocol: Protocol = row.api === "anthropic" ? "anthropic-messages" : OPENAI_BATCH_ENDPOINTS[row.endpoint];
-  const names = publicNames(row, ch);
   const byModel = new Map<string, Usage>();
   const add = (model: string, u: Usage | null) => {
     if (!u) return;
@@ -354,8 +369,9 @@ async function settleBatch(row: BatchRow, ch: LoadedChannel): Promise<void> {
     for await (const line of jsonLines(res.body!)) {
       if (row.api === "anthropic") {
         if (line?.result?.type !== "succeeded") continue;
-        const m = line.result.message;
-        add(names.get(m?.model) ?? row.models[0], fromAnthropic(m?.usage));
+        const model = modelOfLine(row, line.custom_id);
+        if (!model) throw new Error(`result for unknown custom_id ${JSON.stringify(line.custom_id)}`);
+        add(model, fromAnthropic(line.result.message?.usage));
       } else if (line?.response?.status_code === 200) {
         add(row.models[0], usageFromBody(protocol, line.response.body));
       }
@@ -388,9 +404,9 @@ export async function refreshPendingBatches(limit = 20): Promise<number> {
     .select()
     .from(schema.batches)
     .where(and(isNull(schema.batches.settledAt), isNotNull(schema.batches.upstreamId)))
-    .orderBy(schema.batches.lastPolledAt)
+    .orderBy(sql`${schema.batches.lastPolledAt} asc nulls first`)
     .limit(limit);
-  for (const row of rows) await refreshBatch(row);
+  for (const row of rows) await refreshBatch(row).catch((err) => console.error(`batch ${row.id}: maintenance refresh failed`, err));
   return rows.length;
 }
 
@@ -427,7 +443,8 @@ export async function findBatch(userId: number, id: string, api: Api): Promise<B
 /** A page of the user's batches, newest first, starting after the batch `after` (a cursor id). */
 export async function listBatches(userId: number, api: Api, limit: number, after?: string | null): Promise<{ rows: BatchRow[]; hasMore: boolean }> {
   const b = schema.batches;
-  const where = [eq(b.userId, userId), eq(b.api, api)];
+  // Batches that never reached an upstream were answered with an error; their ids were never returned.
+  const where = [eq(b.userId, userId), eq(b.api, api), isNotNull(b.upstreamId)];
   if (after) where.push(sql`${b.createdAt} < (select created_at from batches where id = ${after} and user_id = ${userId})`);
   const rows = await getDb()
     .select()
@@ -512,13 +529,12 @@ export async function streamResults(row: BatchRow, upstreamId: string): Promise<
   const ch = row.channelId != null ? await loadChannel(row.channelId) : null;
   if (!ch) return relayError(errorProtocol(row.api), 404, "the channel that ran this batch no longer exists");
   const res = await upstreamResults(ch, row.api, upstreamId);
-  const names = publicNames(row, ch);
-  const rename = (m: unknown) => (typeof m === "string" ? (names.get(m) ?? m) : m);
   const body = mapJsonLines(res.body!, (line) => {
+    const model = modelOfLine(row, line?.custom_id) ?? row.models[0];
     if (row.api === "anthropic") {
-      if (line?.result?.message?.model) line.result.message.model = rename(line.result.message.model);
+      if (line?.result?.message?.model) line.result.message.model = model;
     } else if (line?.response?.body?.model) {
-      line.response.body.model = rename(line.response.body.model);
+      line.response.body.model = model;
     }
     return line;
   });

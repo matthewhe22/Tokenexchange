@@ -12,10 +12,32 @@ export class UpstreamError extends Error {
   }
 }
 
+/** How long to wait for response headers, and for each chunk of a body after that. */
+const TIMEOUT_MS = 120_000;
+
+/**
+ * Fetch with a timeout on the response headers only, so large result files can stream for as long
+ * as data keeps arriving (body reads use an idle timeout, see jsonLines).
+ */
 async function call(url: string, init: RequestInit): Promise<Response> {
-  const res = await fetch(url, { ...init, signal: AbortSignal.timeout(120_000) });
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(new Error(`upstream did not respond in ${TIMEOUT_MS / 1000}s`)), TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(url, { ...init, signal: ctrl.signal });
+  } finally {
+    clearTimeout(timer);
+  }
   if (!res.ok) throw new UpstreamError(res.status, await res.text().catch(() => ""));
   return res;
+}
+
+function readWithIdleTimeout<T>(reader: ReadableStreamDefaultReader<T>): Promise<ReadableStreamReadResult<T>> {
+  let timer: ReturnType<typeof setTimeout>;
+  const idle = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`upstream sent nothing for ${TIMEOUT_MS / 1000}s`)), TIMEOUT_MS);
+  });
+  return Promise.race([reader.read(), idle]).finally(() => clearTimeout(timer));
 }
 
 const json = (headers: Record<string, string>, body: Json): RequestInit => ({
@@ -95,7 +117,14 @@ export async function* jsonLines(body: ReadableStream<Uint8Array>): AsyncGenerat
   const dec = new TextDecoder();
   let buf = "";
   for (;;) {
-    const { value, done } = await reader.read();
+    let chunk: ReadableStreamReadResult<Uint8Array>;
+    try {
+      chunk = await readWithIdleTimeout(reader);
+    } catch (err) {
+      await reader.cancel(err).catch(() => null);
+      throw err;
+    }
+    const { value, done } = chunk;
     buf += dec.decode(value, { stream: !done });
     let nl: number;
     while ((nl = buf.indexOf("\n")) >= 0) {

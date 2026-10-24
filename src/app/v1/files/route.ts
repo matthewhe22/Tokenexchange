@@ -21,6 +21,8 @@ export async function POST(req: Request) {
   if (form.get("purpose") !== "batch") return relayError("openai-chat", 400, "only purpose=batch is supported", "invalid_request_error");
   if (!file || typeof file === "string") return relayError("openai-chat", 400, "file is required", "invalid_request_error");
   const content = await file.text();
+  // Postgres text cannot hold NUL, and a valid JSONL batch file never contains one.
+  if (content.includes("\u0000")) return relayError("openai-chat", 400, "file must be UTF-8 JSONL text", "invalid_request_error");
   const [row] = await getDb()
     .insert(schema.files)
     .values({ id: newId("file-tx"), userId: p.user.id, purpose: "batch", filename: file.name || "batch.jsonl", bytes: file.size, content })

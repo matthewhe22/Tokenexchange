@@ -2,6 +2,7 @@ import { desc, sql } from "drizzle-orm";
 import { getDb, schema } from "@/db";
 import { RedeemGenerateForm } from "@/components/redeem-generate-form";
 import { formatUsd } from "@/lib/money";
+import { formatDate } from "@/lib/time";
 
 export default async function CodesPage() {
   const c = schema.redeemCodes;
@@ -33,7 +34,7 @@ export default async function CodesPage() {
                 <td>{formatUsd(Number(b.amount))}</td>
                 <td>{b.codes}</td>
                 <td>{b.used} / {b.capacity}</td>
-                <td>{new Date(b.created).toISOString().slice(0, 10)}</td>
+                <td>{formatDate(new Date(b.created))}</td>
               </tr>
             ))}
             {!batches.length && <tr><td colSpan={5} className="muted">No codes yet.</td></tr>}

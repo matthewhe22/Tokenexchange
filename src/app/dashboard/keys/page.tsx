@@ -5,6 +5,7 @@ import { VerifyBanner } from "@/components/verify-banner";
 import { formatUsd } from "@/lib/money";
 import { requireUser } from "@/lib/session";
 import { deleteMyKey, toggleMyKey } from "../actions";
+import { formatDateTime } from "@/lib/time";
 
 export default async function KeysPage() {
   const user = await requireUser();
@@ -23,7 +24,7 @@ export default async function KeysPage() {
                 <td className="mono">{k.keyPrefix}…</td>
                 <td>{formatUsd(k.used)} / {k.quotaLimit != null ? formatUsd(k.quotaLimit) : "no limit"}</td>
                 <td className="mono">{k.allowedModels?.join(", ") ?? "all"}</td>
-                <td>{k.lastUsedAt?.toISOString().replace("T", " ").slice(0, 16) ?? "never"}</td>
+                <td>{k.lastUsedAt ? formatDateTime(k.lastUsedAt) : "never"}</td>
                 <td>{k.enabled ? <span className="badge ok">active</span> : <span className="badge off">disabled</span>}</td>
                 <td className="row">
                   <form action={toggleMyKey}><input type="hidden" name="id" value={k.id} /><button className="secondary">{k.enabled ? "Disable" : "Enable"}</button></form>

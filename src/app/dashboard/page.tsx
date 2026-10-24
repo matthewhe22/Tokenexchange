@@ -6,15 +6,16 @@ import { VerifyBanner } from "@/components/verify-banner";
 import { formatUsd } from "@/lib/money";
 import { requireUser } from "@/lib/session";
 import { appUrl } from "@/lib/url";
+import { APP_TIMEZONE, lastNDays } from "@/lib/time";
 
 export default async function Overview() {
   const user = await requireUser();
   const l = schema.usageLogs;
-  const since = new Date(Date.now() - 13 * 86_400_000);
-  since.setUTCHours(0, 0, 0, 0);
+  // Days are Melbourne calendar days (see APP_TIMEZONE).
+  const { days, since } = lastNDays(14);
   const daily = await getDb()
     .select({
-      day: sql<string>`to_char(date_trunc('day', ${l.createdAt} at time zone 'UTC'), 'YYYY-MM-DD')`,
+      day: sql<string>`to_char(${l.createdAt} at time zone ${APP_TIMEZONE}, 'YYYY-MM-DD')`,
       requests: sql<number>`count(*)::int`,
       spend: sql<number>`coalesce(sum(${l.cost}), 0)::bigint`,
     })
@@ -23,7 +24,6 @@ export default async function Overview() {
     .groupBy(sql`1`)
     .orderBy(sql`1`);
 
-  const days = Array.from({ length: 14 }, (_, i) => new Date(since.getTime() + i * 86_400_000).toISOString().slice(0, 10));
   const byDay = new Map(daily.map((d) => [d.day, { requests: d.requests, spend: Number(d.spend) }]));
   const max = Math.max(1, ...daily.map((d) => Number(d.spend)));
   const total = daily.reduce((s, d) => s + Number(d.spend), 0);

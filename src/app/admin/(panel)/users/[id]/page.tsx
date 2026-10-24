@@ -4,6 +4,7 @@ import { getDb, schema } from "@/db";
 import { CreateKeyForm } from "@/components/create-key-form";
 import { formatUsd } from "@/lib/money";
 import { adjustBalance, deleteKey, setUserGroup, toggleKey, toggleUser } from "../../../actions";
+import { formatDateTime, tzLabel } from "@/lib/time";
 
 export default async function UserPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -67,7 +68,7 @@ export default async function UserPage({ params }: { params: Promise<{ id: strin
                 <td>{formatUsd(k.used)} / {k.quotaLimit != null ? formatUsd(k.quotaLimit) : "∞"}</td>
                 <td className="mono">{k.allowedModels?.join(", ") ?? "all"}</td>
                 <td>{k.rpmLimit ?? "default"}</td>
-                <td>{k.lastUsedAt?.toISOString().replace("T", " ").slice(0, 16) ?? "—"}</td>
+                <td>{k.lastUsedAt ? formatDateTime(k.lastUsedAt) : "—"}</td>
                 <td>{k.enabled ? <span className="badge ok">enabled</span> : <span className="badge off">disabled</span>}</td>
                 <td className="row">
                   <form action={toggleKey}><input type="hidden" name="id" value={k.id} /><button className="secondary">{k.enabled ? "Disable" : "Enable"}</button></form>
@@ -83,11 +84,11 @@ export default async function UserPage({ params }: { params: Promise<{ id: strin
       <h2>Balance history</h2>
       <div className="card scroll">
         <table>
-          <thead><tr><th>Time</th><th>Type</th><th>Amount</th><th>Note</th></tr></thead>
+          <thead><tr><th>Time ({tzLabel()})</th><th>Type</th><th>Amount</th><th>Note</th></tr></thead>
           <tbody>
             {txs.map((t) => (
               <tr key={t.id}>
-                <td>{t.createdAt.toISOString().replace("T", " ").slice(0, 19)}</td>
+                <td>{formatDateTime(t.createdAt, { seconds: true })}</td>
                 <td>{t.type}</td>
                 <td>{formatUsd(t.amount)}</td>
                 <td>{t.note}</td>

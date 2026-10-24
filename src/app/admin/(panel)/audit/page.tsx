@@ -1,5 +1,6 @@
 import { desc } from "drizzle-orm";
 import { getDb, schema } from "@/db";
+import { formatDateTime, tzLabel } from "@/lib/time";
 
 export default async function AuditPage() {
   const rows = await getDb().select().from(schema.auditLogs).orderBy(desc(schema.auditLogs.id)).limit(300);
@@ -9,11 +10,11 @@ export default async function AuditPage() {
       <p className="muted">Every change made in the admin console. Upstream credentials are never recorded, only which fields changed.</p>
       <div className="card scroll">
         <table>
-          <thead><tr><th>Time (UTC)</th><th>Admin</th><th>Action</th><th>Target</th><th>Details</th><th>IP</th></tr></thead>
+          <thead><tr><th>Time ({tzLabel()})</th><th>Admin</th><th>Action</th><th>Target</th><th>Details</th><th>IP</th></tr></thead>
           <tbody>
             {rows.map((r) => (
               <tr key={r.id}>
-                <td>{r.createdAt.toISOString().replace("T", " ").slice(0, 19)}</td>
+                <td>{formatDateTime(r.createdAt, { seconds: true })}</td>
                 <td>{r.actorEmail}</td>
                 <td className="mono">{r.action}</td>
                 <td className="mono">{r.target ?? "—"}</td>

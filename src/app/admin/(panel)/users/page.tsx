@@ -2,6 +2,7 @@ import { desc } from "drizzle-orm";
 import { getDb, schema } from "@/db";
 import { formatUsd } from "@/lib/money";
 import { createUser } from "../../actions";
+import { formatDate } from "@/lib/time";
 
 export default async function UsersPage() {
   const users = await getDb().select().from(schema.users).orderBy(desc(schema.users.id)).limit(200);
@@ -19,7 +20,7 @@ export default async function UsersPage() {
                 <td>{u.role}</td>
                 <td>{formatUsd(u.balance)}</td>
                 <td>{u.disabled ? <span className="badge off">disabled</span> : <span className="badge ok">active</span>}</td>
-                <td>{u.createdAt.toISOString().slice(0, 10)}</td>
+                <td>{formatDate(u.createdAt)}</td>
               </tr>
             ))}
           </tbody>

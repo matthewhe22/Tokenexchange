@@ -5,6 +5,7 @@ import { ChannelForm } from "@/components/channel-form";
 import { ChannelTest } from "@/components/channel-test";
 import { decrypt } from "@/lib/crypto";
 import { deleteChannel, saveChannel } from "../../../actions";
+import { formatDateTime } from "@/lib/time";
 
 export default async function ChannelPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -23,7 +24,7 @@ export default async function ChannelPage({ params }: { params: Promise<{ id: st
       <h1>{c.name}</h1>
       {c.lastError && (
         <div className="notice mono">
-          Last error {c.lastErrorAt?.toISOString()}: {c.lastError}
+          Last error {c.lastErrorAt ? formatDateTime(c.lastErrorAt, { seconds: true }) : ""}: {c.lastError}
         </div>
       )}
       <h2>Test</h2>

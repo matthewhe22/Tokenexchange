@@ -2,6 +2,7 @@ import { and, desc, eq, gte, sql } from "drizzle-orm";
 import { getDb, schema } from "@/db";
 import { formatUsd } from "@/lib/money";
 import { requireUser } from "@/lib/session";
+import { formatDateTime, tzLabel } from "@/lib/time";
 
 export default async function UsagePage() {
   const user = await requireUser();
@@ -52,11 +53,11 @@ export default async function UsagePage() {
       <h2>Recent requests</h2>
       <div className="card scroll">
         <table>
-          <thead><tr><th>Time (UTC)</th><th>Key</th><th>Model</th><th>Status</th><th>Input / cached / output</th><th>Cost</th><th>Latency</th></tr></thead>
+          <thead><tr><th>Time ({tzLabel()})</th><th>Key</th><th>Model</th><th>Status</th><th>Input / cached / output</th><th>Cost</th><th>Latency</th></tr></thead>
           <tbody>
             {recent.map(({ log, key }) => (
               <tr key={log.id}>
-                <td>{log.createdAt.toISOString().replace("T", " ").slice(0, 19)}</td>
+                <td>{formatDateTime(log.createdAt, { seconds: true })}</td>
                 <td>{key ?? "deleted"}</td>
                 <td className="mono">{log.model}{log.stream ? " · stream" : ""}</td>
                 <td><span className={log.status < 400 ? "badge ok" : "badge off"}>{log.status}</span></td>

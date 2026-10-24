@@ -1,6 +1,7 @@
 import { and, desc, eq, type SQL } from "drizzle-orm";
 import { getDb, schema } from "@/db";
 import { formatUsd } from "@/lib/money";
+import { formatDateTime, tzLabel } from "@/lib/time";
 
 export default async function LogsPage({ searchParams }: { searchParams: Promise<{ user?: string; model?: string; errors?: string }> }) {
   const sp = await searchParams;
@@ -30,12 +31,12 @@ export default async function LogsPage({ searchParams }: { searchParams: Promise
       <div className="card scroll">
         <table>
           <thead>
-            <tr><th>Time</th><th>User</th><th>Endpoint</th><th>Model</th><th>Channel</th><th>Status</th><th>In / out / cache</th><th>Cost</th><th>Upstream</th><th>Latency</th></tr>
+            <tr><th>Time ({tzLabel()})</th><th>User</th><th>Endpoint</th><th>Model</th><th>Channel</th><th>Status</th><th>In / out / cache</th><th>Cost</th><th>Upstream</th><th>Latency</th></tr>
           </thead>
           <tbody>
             {shown.map(({ log, channel, email }) => (
               <tr key={log.id}>
-                <td>{log.createdAt.toISOString().replace("T", " ").slice(5, 19)}</td>
+                <td>{formatDateTime(log.createdAt, { seconds: true }).slice(5)}</td>
                 <td>{email ?? log.userId}</td>
                 <td className="mono">{log.endpoint}{log.stream ? " (stream)" : ""}</td>
                 <td className="mono">{log.model}</td>

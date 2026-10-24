@@ -5,6 +5,7 @@ import { formatUsd } from "@/lib/money";
 import { requireUser } from "@/lib/session";
 import { stripeEnabled, TOPUP_MAX_USD, TOPUP_MIN_USD, TOPUP_PRESETS_USD } from "@/lib/stripe";
 import { startTopup } from "../actions";
+import { formatDateTime, tzLabel } from "@/lib/time";
 
 const STATUS: Record<string, string> = {
   success: "Payment received. Credit appears within a few seconds once Stripe confirms it — refresh if it is not there yet.",
@@ -59,11 +60,11 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
       <h2>History</h2>
       <div className="card scroll">
         <table>
-          <thead><tr><th>Date (UTC)</th><th>Type</th><th>Amount</th><th>Details</th></tr></thead>
+          <thead><tr><th>Date ({tzLabel()})</th><th>Type</th><th>Amount</th><th>Details</th></tr></thead>
           <tbody>
             {txs.map((t) => (
               <tr key={t.id}>
-                <td>{t.createdAt.toISOString().replace("T", " ").slice(0, 16)}</td>
+                <td>{formatDateTime(t.createdAt)}</td>
                 <td>{t.type}</td>
                 <td>{formatUsd(t.amount)}</td>
                 <td>{t.note}</td>

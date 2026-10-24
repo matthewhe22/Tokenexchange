@@ -1,11 +1,11 @@
 import { desc, gte, sql } from "drizzle-orm";
 import { getDb, schema } from "@/db";
 import { formatUsd } from "@/lib/money";
+import { formatDateTime, startOfToday, tzLabel } from "@/lib/time";
 
 export default async function Dashboard() {
   const db = getDb();
-  const since = new Date();
-  since.setUTCHours(0, 0, 0, 0);
+  const since = startOfToday();
   const l = schema.usageLogs;
 
   const [today] = await db
@@ -37,7 +37,7 @@ export default async function Dashboard() {
 
   return (
     <>
-      <h1>Today (UTC)</h1>
+      <h1>Today (Melbourne, {tzLabel()})</h1>
       <div className="grid">
         <Stat label="Requests" value={String(today.requests)} />
         <Stat label="Errors" value={String(today.errors)} />
@@ -77,7 +77,7 @@ export default async function Dashboard() {
                 <td>{c.source}</td>
                 <td>{c.enabled ? <span className="badge ok">enabled</span> : <span className="badge off">disabled</span>}</td>
                 <td>{c.failCount}</td>
-                <td className="mono">{c.lastError ? `${c.lastErrorAt?.toISOString()} ${c.lastError.slice(0, 160)}` : "—"}</td>
+                <td className="mono">{c.lastError ? `${c.lastErrorAt ? formatDateTime(c.lastErrorAt) : ""} ${c.lastError.slice(0, 160)}` : "—"}</td>
               </tr>
             ))}
           </tbody>

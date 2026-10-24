@@ -8,6 +8,7 @@ import { requireUser } from "@/lib/session";
 import { getSecuritySettings } from "@/lib/settings";
 import { otpauthUri } from "@/lib/totp";
 import { saveLowBalanceAlert, signOutEverywhere } from "../actions";
+import { formatDate } from "@/lib/time";
 
 export default async function AccountPage({ searchParams }: { searchParams: Promise<{ require2fa?: string }> }) {
   const user = await requireUser();
@@ -24,12 +25,12 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
       {require2fa && <div className="notice error">Administrators must turn on two-factor authentication before using the admin console.</div>}
       <div className="card">
         <div><span className="muted">Email:</span> {user.email} {user.emailVerifiedAt && <span className="badge ok">verified</span>}</div>
-        <div><span className="muted">Member since:</span> {user.createdAt.toISOString().slice(0, 10)}</div>
+        <div><span className="muted">Member since:</span> {formatDate(user.createdAt)}</div>
       </div>
 
       <h2>Two-factor authentication</h2>
       <TotpPanel
-        enabledSince={user.totpEnabledAt?.toISOString().slice(0, 10) ?? null}
+        enabledSince={user.totpEnabledAt ? formatDate(user.totpEnabledAt) : null}
         recoveryLeft={user.totpRecoveryCodes?.length ?? 0}
         pending={pendingSecret && qr ? { secret: pendingSecret, qrSvg: qr } : null}
         needsPassword={!!user.passwordHash}

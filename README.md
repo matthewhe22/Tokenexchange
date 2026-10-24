@@ -10,8 +10,16 @@ sources you buy from: official vendors, cloud platforms and resellers.
 **What's included**
 - Public site: landing page, pricing (generated from the price table), integration docs, terms and privacy templates
 - Self-service accounts: sign-up, email verification, password reset, optional Cloudflare Turnstile
-- Customer console: balance, daily spend, API keys (spending caps, model allow-lists), usage history, Stripe top-ups
-- Admin console: channels, prices, routing, users, balance adjustments, logs, margin dashboard
+- Customer console: balance, daily spend, API keys (spending caps, model allow-lists), usage history, Stripe top-ups,
+  redeem codes, a billed web Playground, two-factor auth with recovery codes, low-balance email, English / 中文
+- Billing safety: every request holds its worst-case cost before calling upstream and the output is capped to what
+  was held, so concurrent requests cannot overdraw; per-key and per-user rate limits
+- Pricing: per-token with cache read/write, long-context tiers, per-unit (images, searches, minutes), customer
+  pricing groups (e.g. wholesale discounts)
+- Admin console: channels (with live test, auto-disable and automatic recovery), prices, routing (source toggles,
+  channel affinity, protocol conversion), rate limits, users, pricing groups, redeem codes, balance adjustments,
+  usage logs, audit log, margin dashboard; optional "require 2FA for admins"
+- Sign-in: email + password, GitHub, Google; brute-force limits on every auth form
 - See [docs/GAP_ANALYSIS.md](docs/GAP_ANALYSIS.md) for a feature comparison with new-api and the improvement backlog
 
 ## Endpoints
@@ -23,7 +31,14 @@ sources you buy from: official vendors, cloud platforms and resellers.
 | OpenAI Embeddings | `POST /v1/embeddings` | same |
 | Anthropic Messages | `POST /v1/messages` | `x-api-key` or Bearer |
 | Gemini | `POST /v1beta/models/{model}:generateContent` / `:streamGenerateContent` | `x-goog-api-key`, `?key=` or Bearer |
+| Image generation | `POST /v1/images/generations` | Bearer |
+| Text-to-speech / transcription | `POST /v1/audio/speech`, `POST /v1/audio/transcriptions` (multipart) | Bearer |
+| Rerank | `POST /v1/rerank` | Bearer |
+| Anthropic token counting (free) | `POST /v1/messages/count_tokens` | `x-api-key` or Bearer |
 | Model list | `GET /v1/models` | any of the above |
+
+`/v1/chat/completions` also serves Claude and Gemini models by translating to the Anthropic / Gemini APIs
+(tools, images, streaming and usage included), so OpenAI-SDK-only clients can use every model.
 
 Streaming and non-streaming are both supported, and both are billed from the upstream's own usage counts, including cache reads and writes and thinking tokens.
 
@@ -73,6 +88,9 @@ npx tsx scripts/e2e.ts          # end-to-end against mock upstreams (truncates e
    - For payments: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`.
    - For email: `RESEND_API_KEY`, `EMAIL_FROM`.
    - Optional bot protection: `NEXT_PUBLIC_TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY`.
+   - Housekeeping cron: `CRON_SECRET` (Vercel Cron sends it to `/api/cron/maintenance`).
+   - Optional: `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` for rate-limit counters; `GITHUB_CLIENT_ID` /
+     `GITHUB_CLIENT_SECRET` and `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` for social sign-in.
    - See `.env.example` for what each one does.
    - Generate `ENCRYPTION_KEY` with `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`.
    - **Do not change `ENCRYPTION_KEY` after deploying**, or the stored upstream credentials can no longer be decrypted.

@@ -1,10 +1,13 @@
 import { and, eq, lt, sql, type SQL } from "drizzle-orm";
 import { getDb, schema } from "@/db";
 import type { Json, Protocol } from "@/relay/types";
-import type { ModelPrice } from "./billing";
+import { ratesFor, type ModelPrice } from "./billing";
 
-/** Output cap for models without `max_output_tokens` when the request sets no limit. */
-export const DEFAULT_MAX_OUTPUT = 32_768;
+/**
+ * Output cap for models without `max_output_tokens` when the request sets no limit. Conservative
+ * because some models reject larger values; set each model's real maximum in Models & prices.
+ */
+export const DEFAULT_MAX_OUTPUT = 8_192;
 /** When the balance cannot cover the full request, serve a shorter answer down to this many tokens. */
 export const MIN_OUTPUT_TOKENS = 256;
 /** Holds older than this belong to functions that died (Vercel allows at most 800s per request). */
@@ -41,18 +44,21 @@ export interface CostPlan {
 }
 
 /** Worst-case pricing for a request, as a function of the output cap it is allowed. */
-export function planCost(protocol: Protocol, body: Json, raw: string, price: ModelPrice): CostPlan {
-  const inputTokens = estimateInputTokens(raw);
+export function planCost(protocol: Protocol, body: Json, raw: string, price: ModelPrice, inputTokensOverride?: number): CostPlan {
+  const inputTokens = inputTokensOverride ?? estimateInputTokens(raw);
   const modelMax = price.maxOutputTokens ?? DEFAULT_MAX_OUTPUT;
-  const outputCap = protocol === "openai-embeddings" ? 0 : Math.min(modelMax, requestedOutputTokens(protocol, body) ?? modelMax);
-  const choices = protocol === "openai-chat" && Number.isInteger(body?.n) && body.n > 1 ? body.n : 1;
+  const noOutputCap = protocol === "openai-embeddings" || protocol === "rerank" || protocol === "openai-audio-speech";
+  const outputCap = noOutputCap ? 0 : Math.min(modelMax, requestedOutputTokens(protocol, body) ?? modelMax);
+  const choices = (protocol === "openai-chat" || protocol === "openai-images") && Number.isInteger(body?.n) && body.n > 1 ? body.n : 1;
+  const rates = ratesFor(price, inputTokens);
   // Input could all be written to the prompt cache, which costs more than plain input.
-  const inputPrice = Math.max(price.inputPrice, price.cacheWritePrice ?? 0);
+  const inputPrice = Math.max(rates.input, rates.cacheWrite);
+  const perUnit = (price.perRequestPrice ?? 0) * 1_000_000 * choices;
   return {
     inputTokens,
     outputCap,
     choices,
-    cost: (out) => Math.max(1, Math.ceil((inputTokens * inputPrice + out * choices * price.outputPrice) * price.markup)),
+    cost: (out) => Math.max(1, Math.ceil((inputTokens * inputPrice + out * choices * rates.output + perUnit) * price.markup)),
   };
 }
 

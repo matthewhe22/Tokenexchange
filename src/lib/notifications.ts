@@ -1,4 +1,4 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { getDb, schema } from "@/db";
 import { sendEmail } from "./email";
 import { formatUsd } from "./money";
@@ -23,4 +23,15 @@ export async function maybeNotifyLowBalance(userId: number, balance: number, thr
     subject: `Your TokenExchange balance is below ${formatUsd(limit)}`,
     text: `Your balance is now ${formatUsd(Math.max(0, balance))}. Requests will be refused when it runs out.\n\nAdd credit: ${appUrl()}/dashboard/billing\n\nChange or turn off this alert: ${appUrl()}/dashboard/account`,
   });
+}
+
+/**
+ * SQL for the users.low_balance_notified_at column after the balance changes by `amount`:
+ * re-arm the email only once the balance is back at or above the threshold, so several small
+ * top-ups that stay below it do not each trigger another email.
+ */
+export async function rearmLowBalanceSql(amount: number) {
+  const fallback = (await getSecuritySettings()).lowBalanceDefault;
+  const u = schema.users;
+  return sql`case when ${u.balance} + ${amount} >= coalesce(${u.lowBalanceThreshold}, ${fallback}) then null else ${u.lowBalanceNotifiedAt} end`;
 }

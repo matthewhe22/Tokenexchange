@@ -1,8 +1,9 @@
-import { and, eq, isNotNull } from "drizzle-orm";
+import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { getDb, schema } from "@/db";
 import { testChannel } from "./channel-test";
 import { invalidateChannels } from "./channels";
 import { decrypt } from "./crypto";
+import { pruneRateLimits } from "./ratelimit";
 import { releaseStaleReservations } from "./reservations";
 
 /** Test request to every auto-disabled channel; healthy ones are put back into rotation. */
@@ -38,13 +39,26 @@ export async function probeDisabledChannels(): Promise<{ probed: number; recover
   return { probed: rows.length, recovered };
 }
 
-let lastRun = 0;
+/**
+ * Claims the maintenance slot across all instances: at most one run per `minIntervalMs`,
+ * via an atomic compare-and-set on the settings table.
+ */
+async function claimSlot(minIntervalMs: number): Promise<boolean> {
+  if (minIntervalMs <= 0) return true;
+  const now = Date.now();
+  const rows = await getDb().execute(sql`
+    insert into settings (key, value) values ('maintenance', ${JSON.stringify({ at: now })}::jsonb)
+    on conflict (key) do update set value = excluded.value
+      where (settings.value->>'at')::bigint < ${now - minIntervalMs}
+    returning key`);
+  return rows.length > 0;
+}
 
-/** Housekeeping: release stale holds and probe disabled channels. Throttled per instance. */
+/** Housekeeping: release stale holds, probe auto-disabled channels, prune rate-limit counters. */
 export async function runMaintenance(minIntervalMs = 0) {
-  if (Date.now() - lastRun < minIntervalMs) return null;
-  lastRun = Date.now();
+  if (!(await claimSlot(minIntervalMs))) return null;
   const released = await releaseStaleReservations();
   const channels = await probeDisabledChannels();
-  return { released, ...channels };
+  const prunedCounters = await pruneRateLimits();
+  return { released, ...channels, prunedCounters };
 }

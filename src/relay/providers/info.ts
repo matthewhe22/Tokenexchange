@@ -2,7 +2,14 @@
 import type { Provider, Source } from "@/db/enums";
 import type { Protocol } from "../types";
 
-const OPENAI_PROTOCOLS: Protocol[] = ["openai-chat", "openai-responses", "openai-embeddings"];
+const OPENAI_PROTOCOLS: Protocol[] = [
+  "openai-chat",
+  "openai-responses",
+  "openai-embeddings",
+  "openai-images",
+  "openai-audio-speech",
+  "openai-audio-transcriptions",
+];
 
 export const PROVIDER_INFO: Record<
   Provider,
@@ -60,7 +67,8 @@ export const PROVIDER_INFO: Record<
   openai_compatible: {
     label: "OpenAI-compatible relay (reseller)",
     defaultSource: "reseller",
-    protocols: OPENAI_PROTOCOLS,
+    // Rerank follows the Cohere/Jina shape most relays expose at /v1/rerank.
+    protocols: [...OPENAI_PROTOCOLS, "rerank"],
     credentialFields: ["apiKey"],
     configFields: [],
     baseUrlHint: "https://relay.example.com/v1",

@@ -129,3 +129,8 @@ pre code { background: none; border: 0; padding: 0; }
   .hero { padding-top: 40px; }
 }
 .qr svg { display: block; background: #fff; border-radius: 6px; }
+.chat-log { display: grid; gap: 12px; min-height: 200px; max-height: 60vh; overflow-y: auto; }
+.chat-msg { display: grid; gap: 2px; }
+.chat-role { font-size: 12px; color: var(--muted); }
+.chat-msg.user .chat-text { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; justify-self: start; }
+.chat-text { white-space: pre-wrap; word-break: break-word; }

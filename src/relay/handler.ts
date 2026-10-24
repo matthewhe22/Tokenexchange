@@ -21,6 +21,9 @@ import type { Json, Protocol, RelayRequest, Usage } from "./types";
 const RETRYABLE = new Set([401, 403, 404, 408, 409, 429, 500, 502, 503, 504, 529]);
 // Client errors whose upstream message is safe and useful to pass through verbatim.
 const PASSTHROUGH = new Set([400, 413, 415, 422]);
+// Some providers report problems with *our* account as 400s (Anthropic "credit balance is too low",
+// Gemini "API key not valid"). Those are channel failures: fail over and never show them to customers.
+const CHANNEL_FAULT = /credit balance is too low|api[ _]key (?:not valid|invalid|expired)|invalid[ _]api[ _]key|insufficient[ _]quota|billing|quota exceeded|exceeded your current quota|account (?:is )?(?:disabled|suspended|deactivated)|organization (?:has been )?(?:disabled|restricted)|permission[ _]denied|access denied/i;
 
 const SSE_HEADERS = {
   "content-type": "text/event-stream; charset=utf-8",
@@ -30,6 +33,10 @@ const SSE_HEADERS = {
 };
 
 export interface RelayOptions {
+  /** Already-authenticated caller (the web playground); skips API-key auth. */
+  principal?: { user: UserRow; apiKey: ApiKeyRow };
+  /** Forward the request as multipart/form-data (audio transcriptions). */
+  multipart?: boolean;
   /** For protocols that carry the model in the URL (Gemini). */
   model?: string;
   stream?: boolean;
@@ -54,6 +61,10 @@ interface Candidate {
   ch: LoadedChannel;
   /** Protocol spoken to this channel; differs from the client's when converting. */
   target: Protocol;
+}
+
+function speechCharacters(body: Json): number {
+  return typeof body?.input === "string" ? [...body.input].length : 0;
 }
 
 async function settleOnce(ctx: Ctx, ch: LoadedChannel | null, status: number, usage: Usage | null, error?: string) {
@@ -99,19 +110,33 @@ async function settle(ctx: Ctx, ch: LoadedChannel | null, status: number, usage:
 
 export async function relay(req: Request, protocol: Protocol, opts: RelayOptions): Promise<Response> {
   const started = Date.now();
-  const key = extractApiKey(req);
-  if (!key) return relayError(protocol, 401, "missing API key");
-  const auth = await authenticateApiKey(key);
-  if (!auth.ok) return relayError(protocol, auth.status, auth.message);
-  const { user, apiKey } = auth;
+  let principal = opts.principal;
+  if (!principal) {
+    const key = extractApiKey(req);
+    if (!key) return relayError(protocol, 401, "missing API key");
+    const auth = await authenticateApiKey(key);
+    if (!auth.ok) return relayError(protocol, auth.status, auth.message);
+    principal = auth;
+  }
+  const { user, apiKey } = principal;
 
   let body: Json;
-  let rawText: string;
+  let rawText = "";
+  let form: FormData | undefined;
+  let inputTokensOverride: number | undefined;
   try {
-    rawText = await req.text();
-    body = JSON.parse(rawText);
+    if (opts.multipart) {
+      form = await req.formData();
+      body = Object.fromEntries([...form.entries()].filter(([, v]) => typeof v === "string"));
+      // Rough audio-token estimate from upload size; settlement uses the provider's real count.
+      const bytes = [...form.values()].reduce((n, v) => n + (typeof v === "string" ? v.length : v.size), 0);
+      inputTokensOverride = Math.ceil(bytes / 1000);
+    } else {
+      rawText = await req.text();
+      body = JSON.parse(rawText);
+    }
   } catch {
-    return relayError(protocol, 400, "request body must be valid JSON");
+    return relayError(protocol, 400, opts.multipart ? "request body must be multipart/form-data" : "request body must be valid JSON");
   }
   if (!body || typeof body !== "object" || Array.isArray(body)) return relayError(protocol, 400, "request body must be a JSON object");
 
@@ -157,7 +182,9 @@ export async function relay(req: Request, protocol: Protocol, opts: RelayOptions
 
   // Hold funds for the worst case before calling upstream, and cap the output so the upstream can
   // never produce more than was held. settle() returns the difference.
-  const plan = planCost(protocol, body, rawText, price);
+  // Text-to-speech is priced per input character, carried in the "input token" slot.
+  if (protocol === "openai-audio-speech") inputTokensOverride = speechCharacters(body);
+  const plan = planCost(protocol, body, rawText, price, inputTokensOverride);
   let held = await reserve(user.id, apiKey.id, plan);
   // Funds may be stuck in holds from killed functions; release this user's stale ones and retry.
   if (!held.ok && (await releaseStaleReservations(undefined, user.id).catch(() => 0)) > 0) {
@@ -173,7 +200,7 @@ export async function relay(req: Request, protocol: Protocol, opts: RelayOptions
   // release holds from killed functions and probe auto-disabled channels, at most every 5 minutes.
   if (Math.random() < 0.01) waitUntil(runMaintenance(5 * 60_000).catch(() => null));
 
-  const rreq: RelayRequest = { protocol, model, stream, body, headers: req.headers };
+  const rreq: RelayRequest = { protocol, model, stream, body, headers: req.headers, form };
   const ctx: Ctx = { user, apiKey, price, req: rreq, endpoint: opts.endpoint, started, reservationId: held.id, settled: false };
   try {
     return await forward(ctx, candidates, routing.autoDisableAfter);
@@ -189,6 +216,8 @@ async function forward(ctx: Ctx, candidates: Candidate[], autoDisableAfter: numb
   const { protocol, model, stream } = ctx.req;
   let lastError = { status: 502, message: "upstream request failed" };
   let lastChannel: LoadedChannel | null = null;
+  let conversionError: string | null = null;
+  let attempted = false;
 
   for (const { ch, target } of candidates) {
     lastChannel = ch;
@@ -199,11 +228,12 @@ async function forward(ctx: Ctx, candidates: Candidate[], autoDisableAfter: numb
         rreq = { ...ctx.req, protocol: target, body: conv.request(ctx.req.body) };
       } catch (err) {
         if (!(err instanceof ConversionError)) throw err;
-        ctx.via = target;
-        await settle(ctx, ch, 400, null, err.message);
-        return relayError(protocol, 400, err.message, "invalid_request_error");
+        // Another candidate (e.g. a different target protocol) may still be able to serve it.
+        conversionError = err.message;
+        continue;
       }
     }
+    attempted = true;
     const runtime = { ...ch, upstreamModel: ch.modelMapping[model] ?? model };
     let res: Response;
     let streamFormat: "sse" | "aws-eventstream";
@@ -221,7 +251,7 @@ async function forward(ctx: Ctx, candidates: Candidate[], autoDisableAfter: numb
     if (!res.ok) {
       const text = await res.text().catch(() => "");
       const detail = `HTTP ${res.status}: ${text.slice(0, 500)}`;
-      if (RETRYABLE.has(res.status)) {
+      if (RETRYABLE.has(res.status) || (res.status === 400 && CHANNEL_FAULT.test(text))) {
         waitUntil(markChannelFailure(ch.id, detail, autoDisableAfter));
         lastError = { status: res.status, message: detail };
         continue;
@@ -240,21 +270,31 @@ async function forward(ctx: Ctx, candidates: Candidate[], autoDisableAfter: numb
     ctx.via = conv ? target : undefined;
 
     if (!stream || !res.body) {
-      const text = await res.text();
+      // Bodies may be binary (text-to-speech audio), so read bytes and only parse JSON when it is JSON.
+      const bytes = await res.arrayBuffer();
+      const contentType = res.headers.get("content-type") ?? "application/json";
+      const text = new TextDecoder().decode(bytes);
       let json: Json = null;
-      try {
-        json = JSON.parse(text);
-      } catch {
-        // non-JSON success body: relay it, but there is nothing to bill
+      if (contentType.includes("json") || conv) {
+        try {
+          json = JSON.parse(text);
+        } catch {
+          // non-JSON success body: relay it, but there is nothing to bill
+        }
       }
-      const usage = json ? usageFromBody(target, json) : null;
+      const usage =
+        protocol === "openai-audio-speech"
+          ? { input: speechCharacters(ctx.req.body), output: 0, cacheRead: 0, cacheWrite: 0 }
+          : json
+            ? usageFromBody(target, json)
+            : null;
       // Never fail a successful upstream call because bookkeeping failed; settle() logs and retries.
       await settle(ctx, ch, res.status, usage, usage ? undefined : "no usage in upstream response");
       if (conv) {
         if (!json) throw new Error("upstream returned a non-JSON body for a translated request");
         return Response.json(conv.response(json, model), { status: res.status });
       }
-      return new Response(text, { status: res.status, headers: { "content-type": res.headers.get("content-type") ?? "application/json" } });
+      return new Response(bytes, { status: res.status, headers: { "content-type": contentType } });
     }
 
     const sse = streamFormat === "aws-eventstream" ? res.body.pipeThrough(bedrockToSSE()) : res.body;
@@ -275,6 +315,11 @@ async function forward(ctx: Ctx, candidates: Candidate[], autoDisableAfter: numb
     return new Response(out, { status: 200, headers: SSE_HEADERS });
   }
 
+  if (!attempted && conversionError) {
+    // Every candidate needed a translation that this request cannot go through.
+    await settle(ctx, lastChannel, 400, null, conversionError);
+    return relayError(protocol, 400, conversionError, "invalid_request_error");
+  }
   waitUntil(settle(ctx, lastChannel, lastError.status, null, `all channels failed; last: ${lastError.message}`));
   const status = lastError.status === 429 ? 429 : 503;
   return relayError(protocol, status, status === 429 ? "upstream rate limited, please retry" : "all upstream channels failed, please retry");

@@ -1,3 +1,4 @@
+import { getDict } from "@/lib/i18n";
 import { LoginForm, OAuthButtons } from "@/components/auth-forms";
 import { enabledOAuthProviders } from "@/lib/oauth";
 
@@ -11,12 +12,13 @@ const ERRORS: Record<string, string> = {
 
 export default async function LoginPage({ searchParams }: { searchParams: Promise<{ next?: string; reset?: string; error?: string }> }) {
   const sp = await searchParams;
+  const t = await getDict();
   const notice = sp.reset ? "Password updated. Sign in with your new password." : sp.error ? ERRORS[sp.error] : undefined;
   return (
     <div className="auth-card card">
-      <h1>Sign in</h1>
-      <OAuthButtons providers={enabledOAuthProviders()} next={sp.next} />
-      <LoginForm next={sp.next} notice={notice} />
+      <h1>{t["auth.signin"]}</h1>
+      <OAuthButtons providers={enabledOAuthProviders()} next={sp.next} t={t} />
+      <LoginForm next={sp.next} notice={notice} t={t} />
     </div>
   );
 }

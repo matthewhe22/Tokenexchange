@@ -16,6 +16,8 @@ export interface PublicPrice {
   output: number;
   cacheRead: number | null;
   cacheWrite: number | null;
+  perUnit: number | null;
+  tier: { threshold: number; input: number; output: number } | null;
 }
 
 /** Customer-facing prices (list x markup) in USD per 1M tokens, grouped by vendor. */
@@ -30,6 +32,11 @@ export async function publicPriceList(): Promise<PublicPrice[]> {
       output: p.outputPrice * p.markup,
       cacheRead: p.cacheReadPrice != null ? p.cacheReadPrice * p.markup : null,
       cacheWrite: p.cacheWritePrice != null ? p.cacheWritePrice * p.markup : null,
+      perUnit: p.perRequestPrice != null ? p.perRequestPrice * p.markup : null,
+      tier:
+        p.tierThreshold != null
+          ? { threshold: p.tierThreshold, input: (p.tierInputPrice ?? p.inputPrice) * p.markup, output: (p.tierOutputPrice ?? p.outputPrice) * p.markup }
+          : null,
     }))
     .sort((a, b) => order.indexOf(a.vendor) - order.indexOf(b.vendor) || a.model.localeCompare(b.model));
 }

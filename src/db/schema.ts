@@ -42,6 +42,8 @@ export const users = pgTable("users", {
   totpEnabledAt: timestamp("totp_enabled_at", { withTimezone: true }),
   // Last accepted 30-second step, so a code cannot be replayed.
   totpLastStep: bigint("totp_last_step", { mode: "number" }),
+  // sha256 of unused single-use recovery codes
+  totpRecoveryCodes: text("totp_recovery_codes").array(),
   // Send a low-balance email when the balance falls below this (micro-USD); null = site default, 0 = off.
   lowBalanceThreshold: bigint("low_balance_threshold", { mode: "number" }),
   lowBalanceNotifiedAt: timestamp("low_balance_notified_at", { withTimezone: true }),
@@ -113,6 +115,13 @@ export const modelPrices = pgTable("model_prices", {
   markup: doublePrecision("markup").notNull().default(1),
   // Largest output the model can produce; caps requests that set no limit (null = MAX_OUTPUT default).
   maxOutputTokens: integer("max_output_tokens"),
+  // Long-context tier: when a request's prompt exceeds `tierThreshold` tokens, the whole request is
+  // priced at the tier rates (e.g. Gemini 2.5 Pro and Claude above 200k). Cache prices scale with input.
+  tierThreshold: integer("tier_threshold"),
+  tierInputPrice: doublePrecision("tier_input_price"),
+  tierOutputPrice: doublePrecision("tier_output_price"),
+  // USD per billable unit (an image, a rerank search, a transcription) for models not priced in tokens.
+  perRequestPrice: doublePrecision("per_request_price"),
   enabled: boolean("enabled").notNull().default(true),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -155,7 +164,7 @@ export const balanceTransactions = pgTable("balance_transactions", {
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
   amount: bigint("amount", { mode: "number" }).notNull(),
-  type: text("type", { enum: ["topup", "adjust", "refund"] }).notNull(),
+  type: text("type", { enum: ["topup", "adjust", "refund", "redeem"] }).notNull(),
   // e.g. Stripe checkout session id; unique so payment webhooks are idempotent
   reference: text("reference").unique(),
   note: text("note"),
@@ -217,3 +226,17 @@ export const auditLogs = pgTable(
   },
   (t) => [index("audit_logs_created_idx").on(t.createdAt)],
 );
+
+// Prepaid credit codes (sold offline, used for promotions). Only a hash of the code is stored.
+export const redeemCodes = pgTable("redeem_codes", {
+  id: serial("id").primaryKey(),
+  codeHash: text("code_hash").notNull().unique(),
+  codePrefix: text("code_prefix").notNull(),
+  amount: bigint("amount", { mode: "number" }).notNull(),
+  maxUses: integer("max_uses").notNull().default(1),
+  usedCount: integer("used_count").notNull().default(0),
+  batch: text("batch"),
+  expiresAt: timestamp("expires_at", { withTimezone: true }),
+  createdBy: integer("created_by"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});

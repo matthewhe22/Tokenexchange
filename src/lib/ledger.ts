@@ -1,5 +1,6 @@
 import { eq, sql } from "drizzle-orm";
 import { getDb, schema } from "@/db";
+import { rearmLowBalanceSql } from "./notifications";
 
 type TxType = (typeof schema.balanceTransactions.$inferInsert)["type"];
 
@@ -17,8 +18,7 @@ export async function applyBalanceChange(e: { userId: number; amount: number; ty
     if (!inserted.length) return false;
     await tx
       .update(schema.users)
-      // A top-up re-arms the low-balance email.
-      .set({ balance: sql`${schema.users.balance} + ${e.amount}`, ...(e.amount > 0 ? { lowBalanceNotifiedAt: null } : {}) })
+      .set({ balance: sql`${schema.users.balance} + ${e.amount}`, lowBalanceNotifiedAt: await rearmLowBalanceSql(e.amount) })
       .where(eq(schema.users.id, e.userId));
     return true;
   });

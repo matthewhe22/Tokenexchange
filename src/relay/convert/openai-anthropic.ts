@@ -11,6 +11,8 @@ import {
   textOf,
   usageChunk,
   type OpenAIChunkState,
+  jsonInstruction,
+  rejectUntranslatable,
 } from "./common";
 
 const DEFAULT_MAX_TOKENS = 4096;
@@ -38,6 +40,7 @@ function contentBlocks(content: Json): Json[] {
 }
 
 export function chatToAnthropicRequest(body: Json): Json {
+  rejectUntranslatable(body);
   const system: string[] = [];
   const messages: { role: "user" | "assistant"; content: Json[] }[] = [];
   const push = (role: "user" | "assistant", blocks: Json[]) => {
@@ -79,10 +82,13 @@ export function chatToAnthropicRequest(body: Json): Json {
     max_tokens: body.max_completion_tokens ?? body.max_tokens ?? DEFAULT_MAX_TOKENS,
     messages,
   };
+  const json = jsonInstruction(body.response_format);
+  if (json) system.push(json);
   if (system.length) out.system = system.join("\n\n");
   if (body.stream) out.stream = true;
   if (body.temperature != null) out.temperature = Math.min(1, body.temperature);
-  if (body.top_p != null) out.top_p = body.top_p;
+  // Newer Claude models accept temperature or top_p, not both; temperature wins.
+  if (body.top_p != null && out.temperature == null) out.top_p = body.top_p;
   if (body.stop != null) out.stop_sequences = Array.isArray(body.stop) ? body.stop : [body.stop];
   if (typeof body.user === "string") out.metadata = { user_id: body.user };
   if (Array.isArray(body.tools) && body.tools.length) {

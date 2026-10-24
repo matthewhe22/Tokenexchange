@@ -3,7 +3,10 @@ import { eq } from "drizzle-orm";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { getDb, schema } from "@/db";
+import { audit } from "@/lib/audit";
+import { emailEnabled } from "@/lib/email";
 import { completeLogin } from "@/lib/login";
+import { bumpSessionVersion } from "@/lib/session";
 import { isOAuthProvider, verifiedEmailFromCode } from "@/lib/oauth";
 
 export const runtime = "nodejs";
@@ -37,8 +40,15 @@ export async function GET(req: Request, { params }: { params: Promise<{ provider
   if (user?.disabled) redirect("/login?error=disabled");
   if (!user) {
     [user] = await db.insert(schema.users).values({ email, emailVerifiedAt: new Date() }).returning();
+  } else if (user.passwordHash && (!user.emailVerifiedAt || !emailEnabled())) {
+    // Someone may have registered this address with a password before its owner showed up
+    // (without email verification we cannot tell). The provider just proved who owns the inbox,
+    // so drop that password and sign out every existing session; the owner can set a new
+    // password with "forgot password".
+    await bumpSessionVersion(user.id, { passwordHash: null, emailVerifiedAt: user.emailVerifiedAt ?? new Date() });
+    [user] = await db.select().from(schema.users).where(eq(schema.users.id, user.id));
+    await audit(user, "oauth.claim_account", `user:${user.id}`, { provider, droppedPassword: true });
   } else if (!user.emailVerifiedAt) {
-    // The provider verified this address, which is as good as our own email check.
     [user] = await db.update(schema.users).set({ emailVerifiedAt: new Date() }).where(eq(schema.users.id, user.id)).returning();
   }
   return completeLogin(user, stored.next);

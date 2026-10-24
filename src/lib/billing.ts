@@ -14,13 +14,41 @@ export async function getPrices(): Promise<Map<string, ModelPrice>> {
   });
 }
 
+export interface Rates {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
+/** USD-per-1M-token rates for a request whose prompt is `promptTokens` long (long-context tiers). */
+export function ratesFor(price: ModelPrice, promptTokens: number): Rates {
+  const base = {
+    input: price.inputPrice,
+    output: price.outputPrice,
+    cacheRead: price.cacheReadPrice ?? price.inputPrice,
+    cacheWrite: price.cacheWritePrice ?? price.inputPrice,
+  };
+  if (price.tierThreshold == null || promptTokens <= price.tierThreshold) return base;
+  const input = price.tierInputPrice ?? base.input;
+  const scale = base.input > 0 ? input / base.input : 1;
+  return {
+    input,
+    output: price.tierOutputPrice ?? base.output,
+    cacheRead: base.cacheRead * scale,
+    cacheWrite: base.cacheWrite * scale,
+  };
+}
+
 /** List-price cost of a request in micro-USD (USD per 1M tokens == micro-USD per token). */
 export function listCost(usage: Usage, price: ModelPrice): number {
+  const r = ratesFor(price, usage.input + usage.cacheRead + usage.cacheWrite);
   return (
-    usage.input * price.inputPrice +
-    usage.output * price.outputPrice +
-    usage.cacheRead * (price.cacheReadPrice ?? price.inputPrice) +
-    usage.cacheWrite * (price.cacheWritePrice ?? price.inputPrice)
+    usage.input * r.input +
+    usage.output * r.output +
+    usage.cacheRead * r.cacheRead +
+    usage.cacheWrite * r.cacheWrite +
+    (usage.units ?? 0) * (price.perRequestPrice ?? 0) * 1_000_000
   );
 }
 

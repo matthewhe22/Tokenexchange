@@ -44,7 +44,7 @@ describe("usage extraction", () => {
 });
 
 describe("chargeFor", () => {
-  const price = { model: "m", inputPrice: 3, outputPrice: 15, cacheReadPrice: 0.3, cacheWritePrice: null, markup: 1.2, maxOutputTokens: null, enabled: true, updatedAt: new Date() };
+  const price = { model: "m", inputPrice: 3, outputPrice: 15, cacheReadPrice: 0.3, cacheWritePrice: null, markup: 1.2, maxOutputTokens: null, tierThreshold: null, tierInputPrice: null, tierOutputPrice: null, perRequestPrice: null, enabled: true, updatedAt: new Date() };
   it("prices in micro-USD and applies markup and cost multiplier", () => {
     // 1000*3 + 100*15 + 1000*0.3 + 10*3 (cache write falls back to input) = 4830 list
     const r = chargeFor({ input: 1000, output: 100, cacheRead: 1000, cacheWrite: 10 }, price, 0.7);
@@ -72,7 +72,7 @@ describe("formatting", async () => {
 
 describe("worst-case cost planning", async () => {
   const r = await import("@/lib/reservations");
-  const price = { model: "m", inputPrice: 2, outputPrice: 10, cacheReadPrice: null, cacheWritePrice: null, markup: 1.5, maxOutputTokens: null, enabled: true, updatedAt: new Date() };
+  const price = { model: "m", inputPrice: 2, outputPrice: 10, cacheReadPrice: null, cacheWritePrice: null, markup: 1.5, maxOutputTokens: null, tierThreshold: null, tierInputPrice: null, tierOutputPrice: null, perRequestPrice: null, enabled: true, updatedAt: new Date() };
 
   it("counts text at 3 bytes/token and base64 blobs per blob", () => {
     expect(r.estimateInputTokens("x".repeat(300))).toBe(100);

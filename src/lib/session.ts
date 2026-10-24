@@ -14,8 +14,12 @@ function secret(): Uint8Array {
   return new TextEncoder().encode(s);
 }
 
-export async function createSession(userId: number, sessionVersion: number): Promise<void> {
-  const token = await new SignJWT({ sv: sessionVersion })
+/**
+ * Signs the browser in. `mfa` records whether this sign-in passed a second factor; admin pages
+ * can require it, so a session from before 2FA was enabled does not count as a 2FA session.
+ */
+export async function createSession(userId: number, sessionVersion: number, opts: { mfa?: boolean } = {}): Promise<void> {
+  const token = await new SignJWT({ sv: sessionVersion, mfa: opts.mfa === true })
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(String(userId))
     .setIssuedAt()
@@ -42,7 +46,7 @@ export async function currentUser() {
     const [user] = await getDb().select().from(schema.users).where(eq(schema.users.id, Number(payload.sub)));
     // A password change bumps sessionVersion, which signs out every older session.
     if (!user || user.disabled || (payload.sv ?? 0) !== user.sessionVersion) return null;
-    return user;
+    return { ...user, sessionMfa: payload.mfa === true, sessionIssuedAt: (payload.iat ?? 0) * 1000 };
   } catch {
     return null;
   }
@@ -60,7 +64,11 @@ export async function requireAdmin() {
   const user = await currentUser();
   if (!user) redirect("/login?next=/admin");
   if (user.role !== "admin") redirect("/dashboard");
-  if (!user.totpEnabledAt && (await getSecuritySettings()).requireAdmin2fa) redirect("/dashboard/account?require2fa=1");
+  if ((await getSecuritySettings()).requireAdmin2fa) {
+    if (!user.totpEnabledAt) redirect("/dashboard/account?require2fa=1");
+    // Enrolled, but this session was not created with a second factor: sign in again.
+    if (!user.sessionMfa) redirect("/login?next=/admin&reauth=1");
+  }
   return user;
 }
 

@@ -19,7 +19,9 @@ const client = postgres(process.env.DATABASE_URL!, { max: 1, onnotice: () => {} 
 const db = drizzle(client, { schema });
 const mock = await startMockUpstream(MOCK_PORT);
 
-await db.execute(sql`truncate usage_logs, balance_transactions, api_keys, channels, model_prices, settings, users restart identity cascade`);
+await db.execute(
+  sql`truncate usage_logs, balance_transactions, api_keys, channels, model_prices, settings, users, pricing_groups, audit_logs, redeem_codes, rate_limits, reservations, auth_tokens restart identity cascade`,
+);
 
 const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
 const serviceAccount = JSON.stringify({
@@ -41,6 +43,12 @@ await db.insert(schema.modelPrices).values([
   { model: "slow-test", inputPrice: 1, outputPrice: 1 },
   { model: "reset-test", inputPrice: 1, outputPrice: 1 },
   { model: "flaky-test", inputPrice: 1, outputPrice: 1 },
+  { model: "fault-test", inputPrice: 1, outputPrice: 1 },
+  { model: "tier-test", inputPrice: 1, outputPrice: 1, tierThreshold: 10, tierInputPrice: 3, tierOutputPrice: 4 },
+  { model: "dalle-test", inputPrice: 0, outputPrice: 0, perRequestPrice: 0.04 },
+  { model: "tts-test", inputPrice: 15, outputPrice: 0 },
+  { model: "whisper-test", inputPrice: 0, outputPrice: 0, perRequestPrice: 0.006 },
+  { model: "rerank-test", inputPrice: 0.05, outputPrice: 0 },
 ]);
 
 type NewChannel = typeof schema.channels.$inferInsert;
@@ -51,9 +59,11 @@ const channel = (c: Omit<NewChannel, "credentials"> & { credentials: Record<stri
 await db.insert(schema.channels).values([
   // highest priority but broken: requests must fail over to the next channel
   channel({ name: "broken reseller", provider: "openai_compatible", source: "reseller", baseUrl: `${MOCK}/broken/v1`, credentials: { apiKey: "x" }, models: ["gpt-test"], priority: 10 }),
-  channel({ name: "openai official", provider: "openai", source: "official", baseUrl: `${MOCK}/openai/v1`, credentials: { apiKey: "up-openai" }, models: ["gpt-test", "embed-test"], modelMapping: { "gpt-test": "gpt-upstream" }, costMultiplier: 0.9 }),
+  channel({ name: "openai official", provider: "openai", source: "official", baseUrl: `${MOCK}/openai/v1`, credentials: { apiKey: "up-openai" }, models: ["gpt-test", "embed-test", "tier-test", "dalle-test", "tts-test", "whisper-test"], modelMapping: { "gpt-test": "gpt-upstream", "whisper-test": "whisper-upstream" }, costMultiplier: 0.9 }),
+  channel({ name: "reranker", provider: "openai_compatible", source: "reseller", baseUrl: `${MOCK}/openai/v1`, credentials: { apiKey: "up-openai" }, models: ["rerank-test"] }),
+  channel({ name: "creditless", provider: "anthropic_compatible", source: "reseller", baseUrl: `${MOCK}/creditless`, credentials: { apiKey: "x" }, models: ["fault-test"], priority: 9 }),
   channel({ name: "azure", provider: "azure_openai", source: "cloud", baseUrl: `${MOCK}/azure/openai/v1`, credentials: { apiKey: "up-azure" }, models: ["azure-test"] }),
-  channel({ name: "anthropic relay", provider: "anthropic_compatible", source: "reseller", baseUrl: `${MOCK}/anthropic`, credentials: { apiKey: "up-anthropic" }, models: ["claude-test"], priority: 5 }),
+  channel({ name: "anthropic relay", provider: "anthropic_compatible", source: "reseller", baseUrl: `${MOCK}/anthropic`, credentials: { apiKey: "up-anthropic" }, models: ["claude-test", "fault-test"], priority: 5 }),
   channel({ name: "bedrock", provider: "bedrock", source: "cloud", baseUrl: `${MOCK}/bedrock`, config: { region: "us-east-1" }, credentials: { apiKey: "up-bedrock" }, models: ["claude-test"], modelMapping: { "claude-test": "us.anthropic.claude-test-v1:0" } }),
   channel({ name: "vertex", provider: "vertex", source: "cloud", baseUrl: `${MOCK}/vertex`, config: { location: "global" }, credentials: { serviceAccount }, models: ["claude-vertex", "gemini-test"] }),
   channel({ name: "flaky", provider: "openai_compatible", source: "reseller", baseUrl: `${MOCK}/flaky/v1`, credentials: { apiKey: "x" }, models: ["flaky-test"] }),
@@ -78,6 +88,7 @@ async function logsSettled(count: number) {
   throw new Error(`expected ${count} usage logs`);
 }
 const lastLog = async () => (await db.select().from(schema.usageLogs).orderBy(sql`id desc`).limit(1))[0];
+const balanceOfUser = async () => (await db.select().from(schema.users).where(eq(schema.users.id, user.id)))[0].balance;
 const settings = (value: unknown) =>
   db.insert(schema.settings).values({ key: "routing", value }).onConflictDoUpdate({ target: schema.settings.key, set: { value } });
 
@@ -367,6 +378,77 @@ await step("Dropping below the low-balance threshold flags the account once", as
   logs = (await db.select({ n: sql<number>`count(*)::int` }).from(schema.usageLogs))[0].n;
 });
 
+// ---------- P1 review fixes & P2 endpoints ----------
+await step("A provider-account 400 (out of credit) fails over instead of reaching the customer", async () => {
+  await settings({ enabledSources: ["official", "cloud", "reseller"], modelSources: {}, maxAttempts: 3, autoDisableAfter: 0 });
+  await new Promise((r) => setTimeout(r, 10_500));
+  const res = await post("/v1/messages", { model: "fault-test", max_tokens: 5, messages: [] }, { "x-api-key": key });
+  assert.equal(res.status, 200, await res.clone().text());
+  const [c] = await db.select().from(schema.channels).where(eq(schema.channels.name, "creditless"));
+  assert.match(c.lastError ?? "", /credit balance/);
+});
+
+const lastCost = async (model: string) => {
+  await new Promise((r) => setTimeout(r, 300));
+  return (await db.select().from(schema.usageLogs).where(eq(schema.usageLogs.model, model)).orderBy(sql`id desc`).limit(1))[0];
+};
+
+await step("Long-context tier prices the whole request at tier rates", async () => {
+  assert.equal((await post("/v1/chat/completions", { model: "tier-test", messages: [] })).status, 200);
+  // prompt 20 (16 + 4 cached) > 10: 16*3 + 5*4 + 4*(1*3) = 80
+  assert.equal((await lastCost("tier-test")).cost, 80);
+});
+
+await step("Image generation is billed per image", async () => {
+  const res = await post("/v1/images/generations", { model: "dalle-test", prompt: "cat", n: 2 });
+  assert.equal(res.status, 200);
+  assert.equal((await res.json()).data.length, 2);
+  assert.equal((await lastCost("dalle-test")).cost, 2 * 40_000);
+});
+
+await step("Text-to-speech returns audio bytes and bills per character", async () => {
+  const res = await post("/v1/audio/speech", { model: "tts-test", input: "hello", voice: "alloy" });
+  assert.equal(res.headers.get("content-type"), "audio/mpeg");
+  assert.deepEqual([...new Uint8Array(await res.arrayBuffer())], [0xff, 0xfb, 0x90, 0x00, 0x01, 0x02]);
+  assert.equal((await lastCost("tts-test")).cost, 5 * 15);
+});
+
+await step("Transcription forwards multipart with the mapped model and bills per started minute", async () => {
+  const form = new FormData();
+  form.append("model", "whisper-test");
+  form.append("file", new Blob([new Uint8Array(2000)], { type: "audio/mpeg" }), "a.mp3");
+  const res = await fetch(`${BASE}/v1/audio/transcriptions`, { method: "POST", headers: { authorization: `Bearer ${key}` }, body: form });
+  assert.equal(res.status, 200, await res.clone().text());
+  assert.equal((await res.json()).text, "hello world");
+  assert.equal((await lastCost("whisper-test")).cost, 2 * 6_000);
+});
+
+await step("Rerank is billed by tokens", async () => {
+  const res = await post("/v1/rerank", { model: "rerank-test", query: "q", documents: ["a"] });
+  assert.equal(res.status, 200);
+  assert.equal((await lastCost("rerank-test")).cost, Math.ceil(100 * 0.05));
+});
+
+await step("count_tokens is forwarded to an Anthropic channel, free", async () => {
+  const res = await post("/v1/messages/count_tokens", { model: "claude-test", messages: [{ role: "user", content: "hi" }] }, { "x-api-key": key });
+  assert.deepEqual(await res.json(), { input_tokens: 42 });
+  const est = await post("/v1/messages/count_tokens", { model: "gpt-test", messages: [{ role: "user", content: "hi" }] }, { "x-api-key": key });
+  assert.ok((await est.json()).input_tokens > 0);
+});
+
+await step("Redeem codes credit once per user and respect max uses", async () => {
+  const { generateRedeemCodes, redeemCode } = await import("../src/lib/redeem");
+  const [code] = await generateRedeemCodes({ count: 1, amount: 5_000_000, maxUses: 1, expiresAt: null, batch: "e2e", createdBy: 0 });
+  const before = await balanceOfUser();
+  assert.deepEqual(await redeemCode(user.id, code.toLowerCase().replace(/-/g, " ")), { ok: true, amount: 5_000_000 });
+  assert.equal(await balanceOfUser(), before + 5_000_000);
+  assert.equal((await redeemCode(user.id, code)).ok, false);
+  const [other] = await db.insert(schema.users).values({ email: "other@example.com" }).returning();
+  assert.match(((await redeemCode(other.id, code)) as { error: string }).error, /already been used/);
+  assert.match(((await redeemCode(user.id, "TX-NOPE-NOPE-NOPE-NOPE")) as { error: string }).error, /not valid/);
+  logs = (await db.select({ n: sql<number>`count(*)::int` }).from(schema.usageLogs))[0].n;
+});
+
 // ---------- Stripe webhooks ----------
 const stripe = new Stripe("sk_test_e2e");
 const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET ?? "whsec_e2e";
@@ -410,3 +492,5 @@ await step("Refunds debit incrementally and idempotently", async () => {
 console.log("\nall e2e checks passed");
 mock.close();
 await client.end();
+// The redeem step imports app modules that hold their own connection pool.
+process.exit(0);

@@ -6,8 +6,12 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getDb, schema } from "@/db";
 import { decrypt, encrypt, generateApiKey, sha256 } from "@/lib/crypto";
+import { audit } from "@/lib/audit";
+import { generateRecoveryCodes } from "@/lib/recovery-codes";
 import { generateTotpSecret, verifyTotp } from "@/lib/totp";
-import { usdToMicros } from "@/lib/money";
+import { formatUsd, usdToMicros } from "@/lib/money";
+import { hit } from "@/lib/ratelimit";
+import { redeemCode } from "@/lib/redeem";
 import { bumpSessionVersion, createSession, requireUser } from "@/lib/session";
 import { createTopupCheckout, stripeEnabled } from "@/lib/stripe";
 
@@ -87,30 +91,70 @@ export async function signOutEverywhere() {
 
 // ---------- two-factor auth ----------
 
-export async function startTotpSetup() {
+type TotpState = { error?: string; message?: string; recoveryCodes?: string[] };
+const FRESH_SESSION_MS = 10 * 60 * 1000;
+
+/** Re-authentication for security changes: the password, or a sign-in in the last 10 minutes for OAuth-only accounts. */
+async function reauthenticated(user: Awaited<ReturnType<typeof requireUser>>, form: FormData): Promise<boolean> {
+  if (user.passwordHash) return bcrypt.compare(str(form, "password"), user.passwordHash);
+  return Date.now() - user.sessionIssuedAt < FRESH_SESSION_MS;
+}
+
+async function auditSelf(user: { id: number; email: string }, action: string) {
+  await audit(user, action, `user:${user.id}`);
+}
+
+export async function startTotpSetup(_prev: unknown, form: FormData): Promise<TotpState> {
   const user = await requireUser();
-  if (user.totpEnabledAt) return;
+  if (user.totpEnabledAt) return {};
+  if (!(await hit(`totp:setup:${user.id}`, 10, 3600)).ok) return { error: "Too many attempts. Try again later." };
+  if (!(await reauthenticated(user, form))) {
+    return { error: user.passwordHash ? "Enter your current password to continue." : "Please sign in again, then retry within 10 minutes." };
+  }
   await getDb().update(schema.users).set({ totpSecret: encrypt(generateTotpSecret()), totpLastStep: null }).where(eq(schema.users.id, user.id));
   revalidatePath("/dashboard/account");
+  return {};
 }
 
-export async function confirmTotp(_prev: unknown, form: FormData): Promise<{ error?: string; message?: string }> {
+export async function confirmTotp(_prev: unknown, form: FormData): Promise<TotpState> {
   const user = await requireUser();
   if (!user.totpSecret || user.totpEnabledAt) return { error: "Start the setup again." };
+  if (!(await hit(`totp:confirm:${user.id}`, 10, 900)).ok) return { error: "Too many attempts. Try again later." };
   const step = verifyTotp(decrypt(user.totpSecret), str(form, "code"), null);
   if (step == null) return { error: "That code is not valid. Check the time on your phone and try again." };
-  await getDb().update(schema.users).set({ totpEnabledAt: new Date(), totpLastStep: step }).where(eq(schema.users.id, user.id));
-  revalidatePath("/dashboard/account");
-  return { message: "Two-factor authentication is on." };
+  const { codes, hashes } = generateRecoveryCodes();
+  // Turning 2FA on signs out every other session (none of them passed a second factor);
+  // this browser just proved a code, so it gets a fresh 2FA session.
+  const version = await bumpSessionVersion(user.id, { totpEnabledAt: new Date(), totpLastStep: step, totpRecoveryCodes: hashes });
+  await createSession(user.id, version, { mfa: true });
+  await auditSelf(user, "2fa.enable");
+  return { message: "Two-factor authentication is on.", recoveryCodes: codes };
 }
 
-export async function disableTotp(_prev: unknown, form: FormData): Promise<{ error?: string; message?: string }> {
+export async function disableTotp(_prev: unknown, form: FormData): Promise<TotpState> {
   const user = await requireUser();
   if (!user.totpSecret || !user.totpEnabledAt) return { error: "Two-factor authentication is not enabled." };
-  if (verifyTotp(decrypt(user.totpSecret), str(form, "code"), user.totpLastStep) == null) return { error: "That code is not valid." };
-  await getDb().update(schema.users).set({ totpSecret: null, totpEnabledAt: null, totpLastStep: null }).where(eq(schema.users.id, user.id));
+  if (!(await hit(`totp:disable:${user.id}`, 5, 900)).ok) return { error: "Too many attempts. Try again later." };
+  const step = verifyTotp(decrypt(user.totpSecret), str(form, "code"), user.totpLastStep);
+  if (step == null) return { error: "That code is not valid." };
+  const version = await bumpSessionVersion(user.id, { totpSecret: null, totpEnabledAt: null, totpLastStep: null, totpRecoveryCodes: null });
+  await createSession(user.id, version);
+  await auditSelf(user, "2fa.disable");
   revalidatePath("/dashboard/account");
   return { message: "Two-factor authentication is off." };
+}
+
+export async function regenerateRecoveryCodes(_prev: unknown, form: FormData): Promise<TotpState> {
+  const user = await requireUser();
+  if (!user.totpSecret || !user.totpEnabledAt) return { error: "Two-factor authentication is not enabled." };
+  if (!(await hit(`totp:regen:${user.id}`, 5, 900)).ok) return { error: "Too many attempts. Try again later." };
+  const step = verifyTotp(decrypt(user.totpSecret), str(form, "code"), user.totpLastStep);
+  if (step == null) return { error: "That code is not valid." };
+  const { codes, hashes } = generateRecoveryCodes();
+  await getDb().update(schema.users).set({ totpRecoveryCodes: hashes, totpLastStep: step }).where(eq(schema.users.id, user.id));
+  await auditSelf(user, "2fa.recovery_codes");
+  revalidatePath("/dashboard/account");
+  return { message: "New recovery codes generated. The old ones no longer work.", recoveryCodes: codes };
 }
 
 // ---------- notifications ----------
@@ -121,4 +165,15 @@ export async function saveLowBalanceAlert(form: FormData) {
   const threshold = raw === "" ? null : usdToMicros(Math.max(0, Number(raw) || 0));
   await getDb().update(schema.users).set({ lowBalanceThreshold: threshold, lowBalanceNotifiedAt: null }).where(eq(schema.users.id, user.id));
   revalidatePath("/dashboard/account");
+}
+
+// ---------- redeem codes ----------
+
+export async function redeem(_prev: unknown, form: FormData): Promise<{ error?: string; message?: string }> {
+  const user = await requireUser();
+  if (!(await hit(`redeem:user:${user.id}`, 10, 3600)).ok) return { error: "Too many attempts. Try again later." };
+  const result = await redeemCode(user.id, str(form, "code"));
+  if (!result.ok) return { error: result.error };
+  revalidatePath("/dashboard/billing");
+  return { message: `${formatUsd(result.amount)} added to your balance.` };
 }

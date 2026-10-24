@@ -1,5 +1,6 @@
 import { desc, eq } from "drizzle-orm";
 import { getDb, schema } from "@/db";
+import { RedeemForm } from "@/components/redeem-form";
 import { formatUsd } from "@/lib/money";
 import { requireUser } from "@/lib/session";
 import { stripeEnabled, TOPUP_MAX_USD, TOPUP_MIN_USD, TOPUP_PRESETS_USD } from "@/lib/stripe";
@@ -52,6 +53,8 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
       ) : (
         <div className="card muted">Online payments are not enabled yet. Contact support to add credit.</div>
       )}
+
+      <RedeemForm />
 
       <h2>History</h2>
       <div className="card scroll">

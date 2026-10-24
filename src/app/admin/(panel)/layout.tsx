@@ -16,6 +16,7 @@ export default async function PanelLayout({ children }: { children: React.ReactN
         <Link href="/admin/settings">Routing</Link>
         <Link href="/admin/users">Users</Link>
         <Link href="/admin/groups">Pricing groups</Link>
+        <Link href="/admin/codes">Redeem codes</Link>
         <Link href="/admin/logs">Usage logs</Link>
         <Link href="/admin/audit">Audit log</Link>
         <form action={logout} style={{ marginTop: 16 }}>

@@ -24,6 +24,10 @@ const OPENAI_PATHS: Partial<Record<Protocol, string>> = {
   "openai-chat": "/chat/completions",
   "openai-responses": "/responses",
   "openai-embeddings": "/embeddings",
+  "openai-images": "/images/generations",
+  "openai-audio-speech": "/audio/speech",
+  "openai-audio-transcriptions": "/audio/transcriptions",
+  rerank: "/rerank",
 };
 
 function buildOpenAI(req: RelayRequest, ch: ChannelRuntime): UpstreamCall {
@@ -43,6 +47,13 @@ function buildOpenAI(req: RelayRequest, ch: ChannelRuntime): UpstreamCall {
   }
   let url = trim(base) + OPENAI_PATHS[req.protocol]!;
   if (ch.provider === "azure_openai" && ch.config.apiVersion) url += `?api-version=${encodeURIComponent(ch.config.apiVersion)}`;
+  if (req.form) {
+    const form = new FormData();
+    for (const [k, v] of req.form.entries()) if (k !== "model") form.append(k, v);
+    form.set("model", ch.upstreamModel);
+    // fetch sets the multipart boundary header itself.
+    return { request: new Request(url, { method: "POST", headers, body: form }), streamFormat: "sse" };
+  }
   return { request: jsonRequest(url, headers, body), streamFormat: "sse" };
 }
 

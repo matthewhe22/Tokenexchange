@@ -92,11 +92,29 @@ export function startMockUpstream(port: number): Promise<{ received: Received[];
         ]);
       }
       if (path.endsWith("/embeddings")) return json(200, { data: [{ embedding: [0.1, 0.2] }], usage: { prompt_tokens: 8, total_tokens: 8 } });
+      if (path.endsWith("/images/generations")) return json(200, { data: Array.from({ length: body.n ?? 1 }, () => ({ url: "https://img/x.png" })) });
+      if (path.endsWith("/audio/speech")) {
+        res.writeHead(200, { "content-type": "audio/mpeg" });
+        return res.end(Buffer.from([0xff, 0xfb, 0x90, 0x00, 0x01, 0x02]));
+      }
+      if (path.endsWith("/audio/transcriptions")) {
+        if (!String(req.headers["content-type"]).startsWith("multipart/form-data") || !raw.includes("whisper-upstream")) {
+          return json(400, { error: { message: "expected multipart with the mapped model" } });
+        }
+        return json(200, { text: "hello world", usage: { type: "duration", seconds: 61 } });
+      }
+      if (path.endsWith("/rerank")) return json(200, { results: [{ index: 0, relevance_score: 0.9 }], usage: { total_tokens: 100 } });
     }
 
     if (path === "/azure/openai/v1/chat/completions") {
       if (req.headers["api-key"] !== "up-azure") return json(401, { error: { message: "bad key" } });
       return json(200, { choices: [{ message: { content: "pong" } }], usage: { prompt_tokens: 10, completion_tokens: 2 } });
+    }
+
+    if (path === "/anthropic/v1/messages/count_tokens") return json(200, { input_tokens: 42 });
+
+    if (path === "/creditless/v1/messages") {
+      return json(400, { type: "error", error: { type: "invalid_request_error", message: "Your credit balance is too low to access the Anthropic API." } });
     }
 
     if (path === "/anthropic/v1/messages") {

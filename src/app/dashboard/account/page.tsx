@@ -1,13 +1,13 @@
 import QRCode from "qrcode";
 import { ChangePasswordForm } from "@/components/change-password-form";
-import { ConfirmTotpForm, DisableTotpForm } from "@/components/totp-forms";
+import { TotpPanel } from "@/components/totp-forms";
 import { VerifyBanner } from "@/components/verify-banner";
 import { decrypt } from "@/lib/crypto";
 import { formatUsd, MICROS_PER_USD } from "@/lib/money";
 import { requireUser } from "@/lib/session";
 import { getSecuritySettings } from "@/lib/settings";
 import { otpauthUri } from "@/lib/totp";
-import { saveLowBalanceAlert, signOutEverywhere, startTotpSetup } from "../actions";
+import { saveLowBalanceAlert, signOutEverywhere } from "../actions";
 
 export default async function AccountPage({ searchParams }: { searchParams: Promise<{ require2fa?: string }> }) {
   const user = await requireUser();
@@ -28,31 +28,12 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
       </div>
 
       <h2>Two-factor authentication</h2>
-      <div className="card">
-        {user.totpEnabledAt ? (
-          <>
-            <div><span className="badge ok">on</span> since {user.totpEnabledAt.toISOString().slice(0, 10)}. You will be asked for a code each time you sign in.</div>
-            <DisableTotpForm />
-          </>
-        ) : pendingSecret ? (
-          <>
-            <p style={{ marginTop: 0 }}>Scan this QR code with an authenticator app (1Password, Google Authenticator, Authy…), then enter the code it shows.</p>
-            <div className="row" style={{ alignItems: "flex-start", gap: 20 }}>
-              <div className="qr" dangerouslySetInnerHTML={{ __html: qr! }} />
-              <div>
-                <div className="muted" style={{ fontSize: 12 }}>Or enter this key manually:</div>
-                <div className="mono" style={{ wordBreak: "break-all", maxWidth: 280 }}>{pendingSecret.replace(/(.{4})/g, "$1 ").trim()}</div>
-              </div>
-            </div>
-            <ConfirmTotpForm />
-          </>
-        ) : (
-          <form action={startTotpSetup} className="row" style={{ justifyContent: "space-between" }}>
-            <span className="muted">Protect your account with a code from your phone in addition to your password.</span>
-            <button>Set up</button>
-          </form>
-        )}
-      </div>
+      <TotpPanel
+        enabledSince={user.totpEnabledAt?.toISOString().slice(0, 10) ?? null}
+        recoveryLeft={user.totpRecoveryCodes?.length ?? 0}
+        pending={pendingSecret && qr ? { secret: pendingSecret, qrSvg: qr } : null}
+        needsPassword={!!user.passwordHash}
+      />
 
       <h2>Low-balance alert</h2>
       <form action={saveLowBalanceAlert} className="card row" style={{ alignItems: "end" }}>

@@ -148,3 +148,45 @@ describe("OpenAI chat -> Gemini", () => {
     ]);
   });
 });
+
+describe("conversion review fixes", async () => {
+  const { toolCallId } = await import("@/relay/convert/openai-gemini");
+  it("gives parallel Gemini tool calls distinct ids in a stream", async () => {
+    const raw = `data: ${JSON.stringify({ candidates: [{ content: { parts: [{ functionCall: { name: "a", args: {} } }, { functionCall: { name: "b", args: {} } }] }, finishReason: "STOP" }] })}\n\n`;
+    const chunks = await runStream(geminiToChatStream("g", false), raw);
+    const ids = chunks.filter((c) => c !== "[DONE]" && c.choices[0]?.delta?.tool_calls).map((c) => c.choices[0].delta.tool_calls[0].id);
+    expect(ids).toEqual(["call_1", "call_2"]);
+  });
+
+  it("reports a Gemini stream cut off before a finish reason as an error", async () => {
+    const raw = `data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: "partial" }] } }] })}\n\n`;
+    const chunks = await runStream(geminiToChatStream("g", true), raw);
+    expect(chunks.at(-1).error.message).toMatch(/ended unexpectedly/);
+    expect(chunks).not.toContain("[DONE]");
+  });
+
+  it("round-trips Gemini thought signatures through tool-call ids", () => {
+    const resp = geminiToChatResponse({ candidates: [{ content: { parts: [{ functionCall: { name: "f", args: {} }, thoughtSignature: "c2ln+/=" }] } }] }, "g");
+    const id = resp.choices[0].message.tool_calls[0].id;
+    expect(id).toBe(toolCallId(1, "c2ln+/="));
+    const req = chatToGeminiRequest({
+      messages: [
+        { role: "user", content: "x" },
+        { role: "assistant", tool_calls: [{ id, function: { name: "f", arguments: "{}" } }] },
+        { role: "tool", tool_call_id: id, content: "ok" },
+      ],
+    });
+    expect(req.contents[1].parts[0]).toEqual({ functionCall: { name: "f", args: {} }, thoughtSignature: "c2ln+/=" });
+  });
+
+  it("rejects features that cannot be translated and maps JSON output", () => {
+    expect(() => chatToAnthropicRequest({ n: 2, messages: [{ role: "user", content: "x" }] })).toThrow(/n > 1/);
+    expect(() => chatToGeminiRequest({ logprobs: true, messages: [{ role: "user", content: "x" }] })).toThrow(/logprobs/);
+    const a = chatToAnthropicRequest({ response_format: { type: "json_object" }, temperature: 0.5, top_p: 0.9, messages: [{ role: "user", content: "x" }] });
+    expect(a.system).toMatch(/JSON object/);
+    expect(a.top_p).toBeUndefined();
+    const g = chatToGeminiRequest({ response_format: { type: "json_schema", json_schema: { schema: { type: "object" } } }, tools: [{ type: "function", function: { name: "f", parameters: { type: "object", additionalProperties: false } } }], messages: [{ role: "user", content: "x" }] });
+    expect(g.generationConfig.responseJsonSchema).toEqual({ type: "object" });
+    expect(g.tools[0].functionDeclarations[0].parametersJsonSchema).toEqual({ type: "object", additionalProperties: false });
+  });
+});

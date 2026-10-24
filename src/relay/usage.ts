@@ -36,9 +36,37 @@ export function fromGemini(u: Json): Usage | null {
   };
 }
 
+export function fromImages(body: Json): Usage {
+  // gpt-image-* report token usage; older image models are priced per image.
+  if (body?.usage) return { input: n(body.usage.input_tokens), output: n(body.usage.output_tokens), cacheRead: 0, cacheWrite: 0 };
+  return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, units: Array.isArray(body?.data) ? body.data.length : 1 };
+}
+
+export function fromTranscription(body: Json): Usage {
+  const u = body?.usage;
+  if (u?.type === "tokens" || u?.input_tokens != null) return { input: n(u.input_tokens), output: n(u.output_tokens), cacheRead: 0, cacheWrite: 0 };
+  // Duration-billed models (whisper): one unit per started minute.
+  const seconds = n(u?.seconds) || n(body?.duration);
+  return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, units: Math.max(1, Math.ceil(seconds / 60)) };
+}
+
+export function fromRerank(body: Json): Usage {
+  const tokens = n(body?.usage?.total_tokens) || n(body?.meta?.billed_units?.input_tokens);
+  const searches = n(body?.meta?.billed_units?.search_units);
+  return { input: tokens, output: 0, cacheRead: 0, cacheWrite: 0, units: searches || (tokens ? 0 : 1) };
+}
+
 /** Usage from a complete (non-streaming) JSON response body. */
 export function usageFromBody(protocol: Protocol, body: Json): Usage | null {
   switch (protocol) {
+    case "openai-images":
+      return fromImages(body);
+    case "openai-audio-transcriptions":
+      return fromTranscription(body);
+    case "rerank":
+      return fromRerank(body);
+    case "openai-audio-speech":
+      return null;
     case "openai-chat":
     case "openai-embeddings":
       return fromOpenAIChat(body?.usage);
@@ -90,7 +118,7 @@ export class StreamUsageTracker {
       case "gemini":
         if (json.usageMetadata) this.usage = fromGemini(json.usageMetadata);
         break;
-      case "openai-embeddings":
+      default:
         break;
     }
   }

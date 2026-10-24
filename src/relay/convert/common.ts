@@ -72,3 +72,22 @@ export const enc = new TextEncoder();
 export function sse(data: Json | string): Uint8Array {
   return enc.encode(`data: ${typeof data === "string" ? data : JSON.stringify(data)}\n\n`);
 }
+
+/** OpenAI-only request features that cannot be reproduced on another vendor's API. */
+export function rejectUntranslatable(body: Json): void {
+  if (Number.isInteger(body.n) && body.n > 1) throw new ConversionError("n > 1 is only supported for OpenAI models");
+  if (body.logprobs || body.top_logprobs != null) throw new ConversionError("logprobs are only supported for OpenAI models");
+  if (body.audio || (Array.isArray(body.modalities) && body.modalities.includes("audio"))) {
+    throw new ConversionError("audio output is only supported for OpenAI models");
+  }
+  if (body.prediction) throw new ConversionError("predicted outputs are only supported for OpenAI models");
+}
+
+/** Instruction that asks for JSON when the target API has no equivalent of `response_format`. */
+export function jsonInstruction(format: Json): string | null {
+  if (format?.type === "json_object") return "Respond only with a single valid JSON object and nothing else.";
+  if (format?.type === "json_schema") {
+    return `Respond only with a single JSON value that validates against this JSON Schema, and nothing else:\n${JSON.stringify(format.json_schema?.schema ?? {})}`;
+  }
+  return null;
+}

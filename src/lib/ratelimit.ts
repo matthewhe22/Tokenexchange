@@ -64,3 +64,33 @@ export async function hit(bucket: string, limit: number, windowSec = 60): Promis
     return { ok: true, count: 0, retryAfter };
   }
 }
+
+/** Current count in `bucket`'s window without incrementing it. Fails open (returns 0). */
+export async function peek(bucket: string, windowSec = 60): Promise<number> {
+  const now = Math.floor(Date.now() / 1000);
+  const windowStart = now - (now % windowSec);
+  try {
+    const cfg = upstash();
+    if (cfg) {
+      const res = await fetch(`${cfg.url}/get/${encodeURIComponent(`rl:${bucket}:${windowStart}`)}`, {
+        headers: { authorization: `Bearer ${cfg.token}` },
+        signal: AbortSignal.timeout(500),
+      });
+      const { result } = (await res.json()) as { result: string | null };
+      return Number(result ?? 0);
+    }
+    const rows = await getDb().execute<{ count: number }>(
+      sql`select count from rate_limits where bucket = ${bucket} and window_start = ${windowStart}`,
+    );
+    return Number(rows[0]?.count ?? 0);
+  } catch {
+    return 0;
+  }
+}
+
+/** Deletes Postgres counters from windows that ended more than a day ago. */
+export async function pruneRateLimits(): Promise<number> {
+  const cutoff = Math.floor(Date.now() / 1000) - 86_400;
+  const rows = await getDb().execute(sql`delete from rate_limits where window_start < ${cutoff} returning bucket`);
+  return rows.length;
+}

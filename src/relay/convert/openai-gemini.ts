@@ -11,7 +11,21 @@ import {
   textOf,
   usageChunk,
   type OpenAIChunkState,
+  rejectUntranslatable,
 } from "./common";
+
+// Gemini 3 returns a `thoughtSignature` on function calls that must be sent back on the next turn.
+// OpenAI clients echo tool-call ids verbatim, so the signature rides along inside the id.
+const SIG_SEP = "~sig~";
+
+export function toolCallId(n: number, signature?: string): string {
+  return signature ? `call_${n}${SIG_SEP}${signature}` : `call_${n}`;
+}
+
+function signatureOf(id: string | undefined): string | undefined {
+  const i = id?.indexOf(SIG_SEP) ?? -1;
+  return i >= 0 ? id!.slice(i + SIG_SEP.length) : undefined;
+}
 
 function parts(content: Json): Json[] {
   if (typeof content === "string") return content ? [{ text: content }] : [];
@@ -29,6 +43,7 @@ function parts(content: Json): Json[] {
 }
 
 export function chatToGeminiRequest(body: Json): Json {
+  rejectUntranslatable(body);
   const system: string[] = [];
   const contents: { role: "user" | "model"; parts: Json[] }[] = [];
   const toolNames = new Map<string, string>();
@@ -52,7 +67,8 @@ export function chatToGeminiRequest(body: Json): Json {
         const p = parts(m.content);
         for (const tc of m.tool_calls ?? []) {
           toolNames.set(tc.id, tc.function?.name);
-          p.push({ functionCall: { name: tc.function?.name, args: parseToolArguments(tc.function?.arguments) } });
+          const sig = signatureOf(tc.id);
+          p.push({ functionCall: { name: tc.function?.name, args: parseToolArguments(tc.function?.arguments) }, ...(sig ? { thoughtSignature: sig } : {}) });
         }
         push("model", p);
         break;
@@ -77,6 +93,8 @@ export function chatToGeminiRequest(body: Json): Json {
   if (body.stop != null) generationConfig.stopSequences = Array.isArray(body.stop) ? body.stop : [body.stop];
   if (body.response_format?.type === "json_object" || body.response_format?.type === "json_schema") {
     generationConfig.responseMimeType = "application/json";
+    const schema = body.response_format.json_schema?.schema;
+    if (schema) generationConfig.responseJsonSchema = schema;
   }
 
   const out: Json = { contents };
@@ -85,10 +103,12 @@ export function chatToGeminiRequest(body: Json): Json {
   if (Array.isArray(body.tools) && body.tools.length) {
     out.tools = [
       {
+        // parametersJsonSchema takes full JSON Schema, including what OpenAI strict mode adds
+        // (additionalProperties: false), which the older `parameters` field rejects.
         functionDeclarations: body.tools.map((t: Json) => ({
           name: t.function?.name,
           description: t.function?.description,
-          parameters: t.function?.parameters,
+          ...(t.function?.parameters ? { parametersJsonSchema: t.function.parameters } : {}),
         })),
       },
     ];
@@ -115,14 +135,18 @@ function usageFrom(u: Json): Json {
   return openAIUsage(u?.promptTokenCount ?? 0, (u?.candidatesTokenCount ?? 0) + (u?.thoughtsTokenCount ?? 0), u?.cachedContentTokenCount ?? 0);
 }
 
-function splitParts(candidate: Json, nextToolId: () => string) {
+function splitParts(candidate: Json, nextToolId: (signature?: string) => string) {
   let text = "";
   const toolCalls: Json[] = [];
   for (const p of candidate?.content?.parts ?? []) {
     if (p.thought) continue;
     if (typeof p.text === "string") text += p.text;
     if (p.functionCall) {
-      toolCalls.push({ id: nextToolId(), type: "function", function: { name: p.functionCall.name, arguments: JSON.stringify(p.functionCall.args ?? {}) } });
+      toolCalls.push({
+        id: nextToolId(p.thoughtSignature),
+        type: "function",
+        function: { name: p.functionCall.name, arguments: JSON.stringify(p.functionCall.args ?? {}) },
+      });
     }
   }
   return { text, toolCalls };
@@ -131,7 +155,7 @@ function splitParts(candidate: Json, nextToolId: () => string) {
 export function geminiToChatResponse(resp: Json, model: string): Json {
   const candidate = resp.candidates?.[0];
   let n = 0;
-  const { text, toolCalls } = splitParts(candidate, () => `call_${++n}`);
+  const { text, toolCalls } = splitParts(candidate, (sig) => toolCallId(++n, sig));
   const message: Json = { role: "assistant", content: text || (toolCalls.length ? null : "") };
   if (toolCalls.length) message.tool_calls = toolCalls;
   const finish = toolCalls.length ? "tool_calls" : (FINISH[candidate?.finishReason] ?? "stop");
@@ -172,7 +196,8 @@ export function geminiToChatStream(model: string, includeUsage: boolean): Transf
     }
     if (ev.usageMetadata) usage = ev.usageMetadata;
     const candidate = ev.candidates?.[0];
-    const { text, toolCalls } = splitParts(candidate, () => `call_${toolCount + 1}`);
+    let idSeq = toolCount;
+    const { text, toolCalls } = splitParts(candidate, (sig) => toolCallId(++idSeq, sig));
     if (text) out.enqueue(sse(chunk(state, { content: text })));
     for (const tc of toolCalls) {
       out.enqueue(sse(chunk(state, { tool_calls: [{ index: toolCount++, ...tc }] })));
@@ -190,7 +215,12 @@ export function geminiToChatStream(model: string, includeUsage: boolean): Transf
     flush() {
       parser.end();
       if (!started) return;
-      out.enqueue(sse(chunk(state, {}, finish ?? "stop")));
+      if (!finish) {
+        // The upstream stream ended without a finish reason: it was cut off, so do not pretend it completed.
+        out.enqueue(sse({ error: { message: "upstream stream ended unexpectedly", type: "api_error" } }));
+        return;
+      }
+      out.enqueue(sse(chunk(state, {}, finish)));
       if (state.includeUsage && usage) out.enqueue(sse(usageChunk(state, usageFrom(usage))));
       out.enqueue(sse("[DONE]"));
     },

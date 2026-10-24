@@ -1,6 +1,15 @@
 import type { Provider, Source } from "@/db/schema";
 
-export type Protocol = "openai-chat" | "openai-responses" | "openai-embeddings" | "anthropic-messages" | "gemini";
+export type Protocol =
+  | "openai-chat"
+  | "openai-responses"
+  | "openai-embeddings"
+  | "openai-images"
+  | "openai-audio-speech"
+  | "openai-audio-transcriptions"
+  | "rerank"
+  | "anthropic-messages"
+  | "gemini";
 
 // Request bodies are relayed mostly untouched, so they are kept as loose JSON.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -12,6 +21,8 @@ export interface Usage {
   output: number;
   cacheRead: number;
   cacheWrite: number;
+  /** Billable units for per-request pricing (images, rerank searches, transcriptions). */
+  units?: number;
 }
 
 export interface RelayRequest {
@@ -21,6 +32,8 @@ export interface RelayRequest {
   stream: boolean;
   body: Json;
   headers: Headers;
+  /** Multipart uploads (audio transcriptions) are forwarded as form data instead of JSON. */
+  form?: FormData;
 }
 
 export interface ChannelRuntime {

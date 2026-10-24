@@ -14,8 +14,10 @@ import { usdToMicros } from "@/lib/money";
 import { audit } from "@/lib/audit";
 import { invalidateGroups } from "@/lib/groups";
 import { requireAdmin } from "@/lib/session";
+import { generateRedeemCodes } from "@/lib/redeem";
 import { saveLimitSettings, saveRoutingSettings, saveSecuritySettings } from "@/lib/settings";
 import { PROVIDER_INFO } from "@/relay/providers/info";
+import { rearmLowBalanceSql } from "@/lib/notifications";
 
 const str = (f: FormData, k: string) => String(f.get(k) ?? "").trim();
 const num = (f: FormData, k: string, d: number) => {
@@ -28,6 +30,17 @@ const list = (v: string) =>
     .split(/[\n,]/)
     .map((s) => s.trim())
     .filter(Boolean);
+
+function redactUrl(raw: string): string {
+  try {
+    const u = new URL(raw);
+    if (u.username || u.password) u.username = u.password = "***";
+    for (const k of [...u.searchParams.keys()]) u.searchParams.set(k, "***");
+    return u.toString();
+  } catch {
+    return "(unparseable URL)";
+  }
+}
 
 // ---------- channels ----------
 
@@ -75,11 +88,15 @@ export async function saveChannel(form: FormData) {
     weight: Math.max(1, num(form, "weight", 1)),
     costMultiplier: num(form, "costMultiplier", 1),
     enabled: form.get("enabled") === "on",
+    // Saving a channel is an explicit admin decision: take it out of automatic recovery.
+    autoDisabledAt: null,
   };
   let channelId = id;
   if (id) await db.update(schema.channels).set(values).where(eq(schema.channels.id, id));
   else [{ id: channelId }] = await db.insert(schema.channels).values(values).returning({ id: schema.channels.id });
   const { credentials: _secret, ...logged } = values;
+  // Relay URLs sometimes embed a key (?key=… or user:pass@); never write that to the audit log.
+  if (logged.baseUrl) logged.baseUrl = redactUrl(logged.baseUrl);
   await audit(admin, id ? "channel.update" : "channel.create", `channel:${channelId}`, {
     ...logged,
     credentialFields: Object.keys(credentials),
@@ -134,6 +151,10 @@ export async function savePrice(form: FormData) {
     cacheWritePrice: opt("cacheWritePrice"),
     markup: num(form, "markup", 1),
     maxOutputTokens: str(form, "maxOutputTokens") ? Math.max(1, Math.floor(num(form, "maxOutputTokens", 0))) : null,
+    tierThreshold: str(form, "tierThreshold") ? Math.max(1, Math.floor(num(form, "tierThreshold", 0))) : null,
+    tierInputPrice: opt("tierInputPrice"),
+    tierOutputPrice: opt("tierOutputPrice"),
+    perRequestPrice: opt("perRequestPrice"),
     enabled: form.get("enabled") === "on",
     updatedAt: new Date(),
   };
@@ -229,7 +250,7 @@ export async function adjustBalance(form: FormData) {
   await getDb().transaction(async (tx) => {
     await tx
       .update(schema.users)
-      .set({ balance: sql`${schema.users.balance} + ${amount}`, ...(amount > 0 ? { lowBalanceNotifiedAt: null } : {}) })
+      .set({ balance: sql`${schema.users.balance} + ${amount}`, lowBalanceNotifiedAt: await rearmLowBalanceSql(amount) })
       .where(eq(schema.users.id, userId));
     await tx.insert(schema.balanceTransactions).values({
       userId,
@@ -327,4 +348,21 @@ export async function setUserGroup(form: FormData) {
   await getDb().update(schema.users).set({ groupId }).where(eq(schema.users.id, userId));
   await audit(admin, "user.set_group", `user:${userId}`, { groupId });
   revalidatePath(`/admin/users/${userId}`);
+}
+
+// ---------- redeem codes ----------
+
+export async function createRedeemCodes(_prev: unknown, form: FormData): Promise<{ codes?: string[]; error?: string }> {
+  const admin = await requireAdmin();
+  const count = Math.floor(num(form, "count", 0));
+  const amount = usdToMicros(num(form, "amount", 0));
+  if (count < 1 || count > 500) return { error: "Generate between 1 and 500 codes at a time." };
+  if (amount <= 0) return { error: "Amount must be positive." };
+  const expires = str(form, "expiresAt");
+  const batch = str(form, "batch") || null;
+  const maxUses = Math.max(1, Math.floor(num(form, "maxUses", 1)));
+  const codes = await generateRedeemCodes({ count, amount, maxUses, expiresAt: expires ? new Date(expires) : null, batch, createdBy: admin.id });
+  await audit(admin, "redeem.generate", batch, { count, amount, maxUses, expires });
+  revalidatePath("/admin/codes");
+  return { codes };
 }

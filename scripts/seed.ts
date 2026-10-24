@@ -2,6 +2,7 @@ import bcrypt from "bcryptjs";
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
+import { directDatabaseUrl, missingDatabaseUrlError } from "../src/db/url";
 import * as schema from "../src/db/schema";
 
 // Creates the first admin and a starter price list.
@@ -26,10 +27,10 @@ const EXAMPLE_PRICES: (typeof schema.modelPrices.$inferInsert)[] = [
   { model: "gemini-2.5-flash", inputPrice: 0.3, outputPrice: 2.5, cacheReadPrice: 0.075, maxOutputTokens: 65_536 },
 ];
 
-const url = process.env.DATABASE_URL_UNPOOLED ?? process.env.DATABASE_URL;
+const url = directDatabaseUrl();
 const email = process.env.ADMIN_EMAIL?.toLowerCase();
 const password = process.env.ADMIN_PASSWORD;
-if (!url) throw new Error("DATABASE_URL is required");
+if (!url) throw missingDatabaseUrlError();
 if (!email || !password) {
   // Lets the Vercel build run seed on every deploy; once the admin exists the variables can be removed.
   console.log("ADMIN_EMAIL / ADMIN_PASSWORD not set; skipping seed");

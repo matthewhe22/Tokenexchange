@@ -27,9 +27,20 @@ const anthropicEvents = (text: string): [string, unknown][] => [
 
 const anthropicJson = { id: "msg_1", type: "message", role: "assistant", content: [{ type: "text", text: "pong" }], usage: { input_tokens: 11, output_tokens: 7 } };
 
+// Batches the mock "runs": every request succeeds with fixed usage, except custom_ids containing "fail".
+interface MockBatch {
+  id: string;
+  lines: { custom_id: string; body: any }[];
+  polls: number;
+  cancelled: boolean;
+}
+
 export function startMockUpstream(port: number): Promise<{ received: Received[]; close: () => void; heal: () => void }> {
   const received: Received[] = [];
   let flakyHealed = false;
+  const files = new Map<string, string>();
+  const batches = new Map<string, MockBatch>();
+  let seq = 0;
   const server = createServer(async (req, res) => {
     let raw = "";
     for await (const c of req) raw += c;
@@ -75,10 +86,65 @@ export function startMockUpstream(port: number): Promise<{ received: Received[];
 
     if (path === "/broken/v1/chat/completions") return json(500, { error: { message: "boom" } });
 
+    if (path === "/ptu/v1/chat/completions") return json(429, { error: { message: "Requests to the deployment have exceeded its provisioned capacity" } });
+
     if (path.startsWith("/openai/v1/")) {
       if (req.headers.authorization !== "Bearer up-openai") return json(401, { error: { message: "bad key" } });
+      // ---- batch API ----
+      if (path === "/openai/v1/files" && req.method === "POST") {
+        if (!raw.includes('name="purpose"') || !raw.includes("batch")) return json(400, { error: { message: "purpose required" } });
+        const jsonl = raw.split(/\r?\n/).filter((l) => l.startsWith('{"custom_id"')).join("\n");
+        const id = `file-up${++seq}`;
+        files.set(id, jsonl);
+        return json(200, { id, object: "file", purpose: "batch", bytes: jsonl.length });
+      }
+      if (path === "/openai/v1/batches" && req.method === "POST") {
+        const content = files.get(body.input_file_id);
+        if (!content) return json(404, { error: { message: "no such file" } });
+        const lines = content.split("\n").map((l) => JSON.parse(l));
+        if (lines.some((l) => l.url !== body.endpoint || l.body.model !== "gpt-4o-batch-up")) return json(400, { error: { message: "bad lines" } });
+        const id = `batch_up${++seq}`;
+        batches.set(id, { id, lines, polls: 0, cancelled: false });
+        return json(200, { id, object: "batch", status: "validating", endpoint: body.endpoint, request_counts: { total: lines.length, completed: 0, failed: 0 } });
+      }
+      const ob = path.match(/^\/openai\/v1\/batches\/([^/]+)(\/cancel)?$/);
+      if (ob) {
+        const b = batches.get(ob[1]);
+        if (!b) return json(404, { error: { message: "no such batch" } });
+        if (ob[2]) b.cancelled = true;
+        // Finished by the time anyone polls.
+        const done = ++b.polls > 0;
+        const failed = b.lines.filter((l) => l.custom_id.includes("fail")).length;
+        return json(200, {
+          id: b.id,
+          object: "batch",
+          status: b.cancelled ? "cancelled" : done ? "completed" : "in_progress",
+          output_file_id: done ? `out-${b.id}` : null,
+          error_file_id: done && failed ? `err-${b.id}` : null,
+          in_progress_at: 1_700_000_000,
+          completed_at: done ? 1_700_000_100 : null,
+          request_counts: { total: b.lines.length, completed: done ? b.lines.length - failed : 0, failed: done ? failed : 0 },
+        });
+      }
+      const oc = path.match(/^\/openai\/v1\/files\/(out|err)-([^/]+)\/content$/);
+      if (oc) {
+        const b = batches.get(oc[2])!;
+        res.writeHead(200, { "content-type": "application/octet-stream" });
+        for (const l of b.lines) {
+          const fail = l.custom_id.includes("fail");
+          if (fail !== (oc[1] === "err")) continue;
+          res.write(
+            JSON.stringify(
+              fail
+                ? { id: `r-${l.custom_id}`, custom_id: l.custom_id, response: { status_code: 400, body: { error: { message: "bad" } } } }
+                : { id: `r-${l.custom_id}`, custom_id: l.custom_id, response: { status_code: 200, body: { id: "c", model: l.body.model, choices: [{ message: { content: "ok" } }], usage: { prompt_tokens: 100, completion_tokens: 10 } } } },
+            ) + "\n",
+          );
+        }
+        return res.end();
+      }
       if (path.endsWith("/chat/completions")) {
-        if (!body.stream) return json(200, { id: "c1", choices: [{ message: { role: "assistant", content: "pong" } }], usage: { prompt_tokens: 20, completion_tokens: 5, prompt_tokens_details: { cached_tokens: 4 } } });
+        if (!body.stream) return json(200, { id: "c1", service_tier: body.service_tier ?? "default", choices: [{ message: { role: "assistant", content: "pong" } }], usage: { prompt_tokens: 20, completion_tokens: 5, prompt_tokens_details: { cached_tokens: 4 } } });
         const ev: [undefined, unknown][] = [[undefined, { id: "c1", choices: [{ delta: { content: "po" } }] }], [undefined, { id: "c1", choices: [{ delta: { content: "ng" } }] }]];
         if (body.stream_options?.include_usage) ev.push([undefined, { id: "c1", choices: [], usage: { prompt_tokens: 20, completion_tokens: 5 } }]);
         ev.push([undefined, "[DONE]"]);
@@ -112,6 +178,40 @@ export function startMockUpstream(port: number): Promise<{ received: Received[];
     }
 
     if (path === "/anthropic/v1/messages/count_tokens") return json(200, { input_tokens: 42 });
+
+    if (path === "/anthropic/v1/messages/batches" && req.method === "POST") {
+      if (req.headers["x-api-key"] !== "up-anthropic") return json(401, { type: "error", error: { type: "authentication_error", message: "bad key" } });
+      if (!body.requests?.every((r: any) => r.params?.max_tokens && r.params.model === "claude-up" && !r.params.stream)) {
+        return json(400, { type: "error", error: { type: "invalid_request_error", message: "bad requests" } });
+      }
+      const id = `msgbatch_up${++seq}`;
+      batches.set(id, { id, lines: body.requests.map((r: any) => ({ custom_id: r.custom_id, body: r.params })), polls: 0, cancelled: false });
+      return json(200, { id, type: "message_batch", processing_status: "in_progress", request_counts: { processing: body.requests.length, succeeded: 0, errored: 0, canceled: 0, expired: 0 }, created_at: "2026-01-01T00:00:00Z", results_url: null });
+    }
+    const ab = path.match(/^\/anthropic\/v1\/messages\/batches\/([^/]+)(\/cancel|\/results)?$/);
+    if (ab) {
+      const b = batches.get(ab[1]);
+      if (!b) return json(404, { type: "error", error: { type: "not_found_error", message: "no such batch" } });
+      if (ab[2] === "/results") {
+        res.writeHead(200, { "content-type": "application/x-jsonl" });
+        for (const l of b.lines) {
+          res.write(JSON.stringify({ custom_id: l.custom_id, result: { type: "succeeded", message: { ...anthropicJson, model: l.body.model, usage: { input_tokens: 200, output_tokens: 20 } } } }) + "\n");
+        }
+        return res.end();
+      }
+      if (req.method === "DELETE") return json(200, { id: b.id, type: "message_batch_deleted" });
+      if (ab[2]) b.cancelled = true;
+      const done = ++b.polls > 0;
+      return json(200, {
+        id: b.id,
+        type: "message_batch",
+        processing_status: done ? "ended" : "in_progress",
+        request_counts: { processing: done ? 0 : b.lines.length, succeeded: done ? b.lines.length : 0, errored: 0, canceled: 0, expired: 0 },
+        created_at: "2026-01-01T00:00:00Z",
+        ended_at: done ? "2026-01-01T01:00:00Z" : null,
+        results_url: done ? `http://localhost:${port}/anthropic/v1/messages/batches/${b.id}/results` : null,
+      });
+    }
 
     if (path === "/creditless/v1/messages") {
       return json(400, { type: "error", error: { type: "invalid_request_error", message: "Your credit balance is too low to access the Anthropic API." } });

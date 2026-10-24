@@ -13,6 +13,8 @@ export default async function PanelLayout({ children }: { children: React.ReactN
         <Link href="/admin" className="brand">TokenExchange</Link>
         <Link href="/admin">Dashboard</Link>
         <Link href="/admin/channels">Channels</Link>
+        <Link href="/admin/capacity">Capacity</Link>
+        <Link href="/admin/batches">Batches</Link>
         <Link href="/admin/models">Models &amp; prices</Link>
         <Link href="/admin/settings">Routing</Link>
         <Link href="/admin/users">Users</Link>

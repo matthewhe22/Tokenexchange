@@ -82,6 +82,8 @@ export function usageFromBody(protocol: Protocol, body: Json): Usage | null {
 /** Accumulates usage across the events of a streamed response. */
 export class StreamUsageTracker {
   private usage: Usage | null = null;
+  /** `service_tier` reported by an OpenAI stream. */
+  serviceTier: unknown = undefined;
 
   constructor(private protocol: Protocol) {}
 
@@ -96,9 +98,11 @@ export class StreamUsageTracker {
     switch (this.protocol) {
       case "openai-chat":
         if (json.usage) this.usage = fromOpenAIChat(json.usage);
+        if (json.service_tier != null) this.serviceTier = json.service_tier;
         break;
       case "openai-responses":
         if (json.response?.usage) this.usage = fromOpenAIResponses(json.response.usage);
+        if (json.response?.service_tier != null) this.serviceTier = json.response.service_tier;
         break;
       case "anthropic-messages":
         if (json.type === "message_start") {

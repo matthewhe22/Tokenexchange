@@ -8,11 +8,18 @@ export async function getGroups(): Promise<Map<number, PricingGroup>> {
   return cached("groups", async () => new Map((await getDb().select().from(schema.pricingGroups)).map((g) => [g.id, g])));
 }
 
-/** The price a member of `groupId` pays: the model's markup times the group multiplier. */
+/** The price a member of `groupId` pays: the model's markups times the group multiplier. */
 export async function priceForGroup(price: ModelPrice, groupId: number | null): Promise<ModelPrice> {
   if (groupId == null) return price;
   const group = (await getGroups()).get(groupId);
-  return group ? { ...price, markup: price.markup * group.multiplier } : price;
+  if (!group) return price;
+  const m = group.multiplier;
+  return {
+    ...price,
+    markup: price.markup * m,
+    flexMarkup: price.flexMarkup == null ? null : price.flexMarkup * m,
+    batchMarkup: price.batchMarkup == null ? null : price.batchMarkup * m,
+  };
 }
 
 export function invalidateGroups(): void {

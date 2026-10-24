@@ -1,4 +1,4 @@
-import { and, eq, lt, sql, type SQL } from "drizzle-orm";
+import { and, eq, isNull, lt, or, sql, type SQL } from "drizzle-orm";
 import { getDb, schema } from "@/db";
 import type { Json, Protocol } from "@/relay/types";
 import { ratesFor, type ModelPrice } from "./billing";
@@ -43,8 +43,18 @@ export interface CostPlan {
   cost: (outputTokens: number) => number;
 }
 
-/** Worst-case pricing for a request, as a function of the output cap it is allowed. */
-export function planCost(protocol: Protocol, body: Json, raw: string, price: ModelPrice, inputTokensOverride?: number): CostPlan {
+/**
+ * Worst-case pricing for a request, as a function of the output cap it is allowed. `sell` is the
+ * customer price as a multiple of list (the model's markup, or a flex / priority / batch rate).
+ */
+export function planCost(
+  protocol: Protocol,
+  body: Json,
+  raw: string,
+  price: ModelPrice,
+  inputTokensOverride?: number,
+  sell: number = price.markup,
+): CostPlan {
   const inputTokens = inputTokensOverride ?? estimateInputTokens(raw);
   const modelMax = price.maxOutputTokens ?? DEFAULT_MAX_OUTPUT;
   const noOutputCap = protocol === "openai-embeddings" || protocol === "rerank" || protocol === "openai-audio-speech";
@@ -58,7 +68,7 @@ export function planCost(protocol: Protocol, body: Json, raw: string, price: Mod
     inputTokens,
     outputCap,
     choices,
-    cost: (out) => Math.max(1, Math.ceil((inputTokens * inputPrice + out * choices * rates.output + perUnit) * price.markup)),
+    cost: (out) => Math.max(1, Math.ceil((inputTokens * inputPrice + out * choices * rates.output + perUnit) * sell)),
   };
 }
 
@@ -106,7 +116,7 @@ export type ReserveResult =
  * limit. If the full amount is not available, the output cap is shrunk to what is (down to
  * MIN_OUTPUT_TOKENS); otherwise the request is refused. The caller must apply `outputCap`.
  */
-export async function reserve(userId: number, apiKeyId: number, plan: CostPlan): Promise<ReserveResult> {
+export async function reserve(userId: number, apiKeyId: number, plan: CostPlan, holdUntil?: Date): Promise<ReserveResult> {
   return getDb().transaction(async (tx) => {
     // Lock order (user, then key) is the same everywhere to avoid deadlocks.
     const [user] = await tx
@@ -131,7 +141,7 @@ export async function reserve(userId: number, apiKeyId: number, plan: CostPlan):
     const amount = plan.cost(cap);
     await tx.update(schema.users).set({ balance: sql`${schema.users.balance} - ${amount}` }).where(eq(schema.users.id, userId));
     await tx.update(schema.apiKeys).set({ used: sql`${schema.apiKeys.used} + ${amount}` }).where(eq(schema.apiKeys.id, apiKeyId));
-    const [row] = await tx.insert(schema.reservations).values({ userId, apiKeyId, amount }).returning({ id: schema.reservations.id });
+    const [row] = await tx.insert(schema.reservations).values({ userId, apiKeyId, amount, holdUntil }).returning({ id: schema.reservations.id });
     return { ok: true, id: row.id, amount, outputCap: cap } as const;
   });
 }
@@ -141,7 +151,11 @@ export async function reserve(userId: number, apiKeyId: number, plan: CostPlan):
  * Each release is logged as a zero-cost usage row so unbilled requests can be reconciled.
  */
 export async function releaseStaleReservations(olderThanMs = STALE_AFTER_MS, userId?: number): Promise<number> {
-  const where: SQL[] = [lt(schema.reservations.createdAt, new Date(Date.now() - olderThanMs))];
+  const where: SQL[] = [
+    lt(schema.reservations.createdAt, new Date(Date.now() - olderThanMs)),
+    // Batch holds last up to a day or two; they are released when the batch settles.
+    or(isNull(schema.reservations.holdUntil), lt(schema.reservations.holdUntil, new Date()))!,
+  ];
   if (userId != null) where.push(eq(schema.reservations.userId, userId));
   return getDb().transaction(async (tx) => {
     const rows = await tx.delete(schema.reservations).where(and(...where)).returning();

@@ -85,7 +85,7 @@
 
 ## 7. 建议的改进顺序
 
-> 状态（2026-10）：P0、P1、P2 已完成（P0、P1 各经过一次独立 review 并修复了发现的问题），见上表标注。剩余：图像编辑、TPM / 并发限流、Passkey、邀请返利、更多语言、Realtime（需常驻进程）。
+> 状态（2026-10）：P0、P1、P2 已完成（P0、P1 各经过一次独立 review 并修复了发现的问题），见上表标注。另已完成盈利模式 A、B 的支撑和 `service_tier` 计费修复（见 7a）。剩余：授权渠道功能（发票、账期、SLA）、图像编辑、按 key 的 TPM / 并发限流、Passkey、邀请返利、更多语言、Realtime（需常驻进程）。
 
 **P0（上线收费之前）**
 1. 预扣费，防止并发请求透支余额
@@ -100,6 +100,15 @@
 8. 审计日志、低余额邮件、渠道自动恢复
 
 **P2 以后**：图像、音频、rerank、count_tokens 接口；阶梯价；兑换码；playground；多语言
+
+## 7a. 盈利模式（2026-10 新增）
+
+| 模式 | new-api（据 README） | 我们 | 说明 |
+|---|---|---|---|
+| A 容量批发（PTU / 预留吞吐） | 有优先级 / 重试，README 未提固定成本 | ✅ 渠道可设"每小时固定成本、每分钟 token 容量、承诺到期日"；容量用满或返回 429 时溢出到按量渠道且不计失败；**Capacity** 页显示利用率、盈亏平衡利用率、峰值、毛利和到期提醒；看板毛利按时间分摊固定成本 | 固定成本渠道的单次请求不计边际成本 |
+| B Batch（异步五折） | README 只有 `/v1/tasks`（视频 / 音乐），未列 batch | ✅ OpenAI `/v1/files` + `/v1/batches`（OpenAI、Azure 渠道），Anthropic `/v1/messages/batches`（Anthropic 官方渠道）；创建时按最坏情况预扣（最长 48 小时），结束后按上游实际用量、以模型的 batch 加价倍数结算；结果流式下载并替换上游模型名 | Bedrock / Vertex / Gemini 的 batch 需要 S3 / GCS，暂不支持 |
+| OpenAI `service_tier` | 未注明 | ✅ 默认移除；模型配了 flex / priority 价格才放行，并按上游返回的实际档位计费；Anthropic 的 `service_tier` 一律移除 | 修复前：客户传 `priority` 我们按标准价收、上游按高价扣 |
+| C 授权渠道（发票、账期、SLA） | 未注明 | ❌ | 暂不做 |
 
 ## 8. 我们比 new-api 好的地方
 

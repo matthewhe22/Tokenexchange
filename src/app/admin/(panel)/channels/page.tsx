@@ -30,7 +30,7 @@ export default async function ChannelsPage() {
                 <td>{c.source}</td>
                 <td className="mono">{c.models.join(", ")}</td>
                 <td>{c.priority} / {c.weight}</td>
-                <td>{c.costMultiplier}</td>
+                <td>{c.fixedCostHourly != null ? `$${c.fixedCostHourly}/h fixed` : c.costMultiplier}</td>
                 <td>
                   {c.enabled ? <span className="badge ok">enabled</span> : <span className="badge off">disabled</span>}
                   {c.failCount > 0 && <span className="badge off" style={{ marginLeft: 4 }}>{c.failCount} fails</span>}
@@ -51,7 +51,7 @@ export default async function ChannelsPage() {
       <h2>Add channel</h2>
       <ChannelForm
         action={saveChannel}
-        value={{ name: "", provider: "openai", source: "", baseUrl: "", config: {}, models: [], modelMapping: {}, priority: 0, weight: 1, costMultiplier: 1, enabled: true, storedCredentials: [] }}
+        value={{ name: "", provider: "openai", source: "", baseUrl: "", config: {}, models: [], modelMapping: {}, priority: 0, weight: 1, costMultiplier: 1, fixedCostHourly: null, capacityTpm: null, commitmentEndsAt: "", enabled: true, storedCredentials: [] }}
       />
     </>
   );

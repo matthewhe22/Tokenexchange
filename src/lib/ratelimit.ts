@@ -14,13 +14,13 @@ function upstash(): { url: string; token: string } | null {
   return url && token ? { url: url.replace(/\/+$/, ""), token } : null;
 }
 
-async function incrUpstash(cfg: { url: string; token: string }, key: string, windowSec: number): Promise<number> {
+async function incrUpstash(cfg: { url: string; token: string }, key: string, windowSec: number, amount: number): Promise<number> {
   const res = await fetch(`${cfg.url}/pipeline`, {
     method: "POST",
     headers: { authorization: `Bearer ${cfg.token}`, "content-type": "application/json" },
     // The key is per-window, so a plain EXPIRE (re-set on every hit) is enough.
     body: JSON.stringify([
-      ["INCR", key],
+      ["INCRBY", key, String(amount)],
       ["EXPIRE", key, String(windowSec + 1)],
     ]),
     signal: AbortSignal.timeout(500),
@@ -32,14 +32,14 @@ async function incrUpstash(cfg: { url: string; token: string }, key: string, win
   return incr.result;
 }
 
-async function incrPostgres(key: string, windowStart: number): Promise<number> {
+async function incrPostgres(key: string, windowStart: number, amount: number): Promise<number> {
   const rows = await getDb().execute<{ count: number }>(sql`
-    insert into rate_limits (bucket, window_start, count) values (${key}, ${windowStart}, 1)
+    insert into rate_limits (bucket, window_start, count) values (${key}, ${windowStart}, ${amount})
     on conflict (bucket) do update set
       -- Instances with skewed clocks must never move the window backwards or reset a newer one.
       count = case
-        when excluded.window_start > rate_limits.window_start then 1
-        else rate_limits.count + 1 end,
+        when excluded.window_start > rate_limits.window_start then excluded.count
+        else rate_limits.count + excluded.count end,
       window_start = greatest(rate_limits.window_start, excluded.window_start)
     returning count`);
   return Number(rows[0].count);
@@ -49,15 +49,18 @@ async function incrPostgres(key: string, windowStart: number): Promise<number> {
  * Fixed-window counter: allows `limit` hits per `windowSec` for `bucket`. Uses Upstash Redis when
  * configured (shared across all instances, no database writes), otherwise a Postgres table.
  * Fails open if the store is unreachable, so an outage of the limiter never blocks paying traffic.
+ * `amount` counts more than one unit at once (e.g. tokens served by a capacity channel).
  */
-export async function hit(bucket: string, limit: number, windowSec = 60): Promise<LimitResult> {
+export async function hit(bucket: string, limit: number, windowSec = 60, amount = 1): Promise<LimitResult> {
   const now = Math.floor(Date.now() / 1000);
   const windowStart = now - (now % windowSec);
   const retryAfter = windowStart + windowSec - now;
   if (limit <= 0) return { ok: true, count: 0, retryAfter };
   try {
     const cfg = upstash();
-    const count = cfg ? await incrUpstash(cfg, `rl:${bucket}:${windowStart}`, windowSec) : await incrPostgres(bucket, windowStart);
+    const count = cfg
+      ? await incrUpstash(cfg, `rl:${bucket}:${windowStart}`, windowSec, amount)
+      : await incrPostgres(bucket, windowStart, amount);
     return { ok: count <= limit, count, retryAfter };
   } catch (err) {
     console.error("rate limiter unavailable, allowing request", err);
@@ -93,4 +96,9 @@ export async function pruneRateLimits(): Promise<number> {
   const cutoff = Math.floor(Date.now() / 1000) - 86_400;
   const rows = await getDb().execute(sql`delete from rate_limits where window_start < ${cutoff} returning bucket`);
   return rows.length;
+}
+
+/** Adds `amount` to the current window of `bucket` (no limit), e.g. tokens per minute. */
+export async function addToWindow(bucket: string, amount: number, windowSec = 60): Promise<void> {
+  if (amount > 0) await hit(bucket, Number.MAX_SAFE_INTEGER, windowSec, amount);
 }

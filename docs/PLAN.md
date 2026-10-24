@@ -47,6 +47,7 @@
 | **P0 上线前加固** | 预扣费防透支（输出上限写入上游请求）、按 key / 用户限流、改密码后旧会话失效；经独立 review 并修复 | ✅ 完成 |
 | **P1** | OpenAI↔Anthropic/Gemini 协议转换、渠道亲和、分组定价、GitHub/Google 登录、TOTP 两步验证 + 恢复码、登录防爆破、审计日志、低余额邮件、渠道自动恢复；经独立 review 并修复 | ✅ 完成 |
 | **P2** | 图像 / 语音 / rerank / count_tokens 接口、长上下文阶梯价与按次计价、兑换码、Playground、中英文界面 | ✅ 完成 |
+| **盈利模式 A / B** | `service_tier` 计费漏洞修复与 flex / priority 定价；承诺容量渠道（固定小时成本、TPM 容量、到期日、溢出不计失败）与 Capacity 利用率页；OpenAI / Anthropic Batch API（预扣、轮询结算、结果下载） | ✅ 完成 |
 | **M2 能算账** | 每日对账（Stripe ↔ 充值 ↔ 余额）；按来源、渠道、客户的毛利报表；上游余额和错误率告警；渠道连续失败自动熔断；可选 OpenAI ↔ Anthropic 协议转换 | |
 | **M3 能批发** | 代理商（子账户、进货价、自定价、白标域名）；佣金结算；风控（单 key 并发 / QPS、异常地域、拒付追回） | |
 | **M4 规模化** | Upstash Redis 限流和缓存；日志冷热分离；多区域；Stripe Billing 订阅套餐 | |

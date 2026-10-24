@@ -44,11 +44,52 @@ describe("usage extraction", () => {
 });
 
 describe("chargeFor", () => {
-  const price = { model: "m", inputPrice: 3, outputPrice: 15, cacheReadPrice: 0.3, cacheWritePrice: null, markup: 1.2, maxOutputTokens: null, tierThreshold: null, tierInputPrice: null, tierOutputPrice: null, perRequestPrice: null, enabled: true, updatedAt: new Date() };
+  const price = { model: "m", inputPrice: 3, outputPrice: 15, cacheReadPrice: 0.3, cacheWritePrice: null, markup: 1.2, maxOutputTokens: null, tierThreshold: null, tierInputPrice: null, tierOutputPrice: null, perRequestPrice: null, flexMarkup: null, batchMarkup: null, priorityMultiplier: null, enabled: true, updatedAt: new Date() };
   it("prices in micro-USD and applies markup and cost multiplier", () => {
     // 1000*3 + 100*15 + 1000*0.3 + 10*3 (cache write falls back to input) = 4830 list
-    const r = chargeFor({ input: 1000, output: 100, cacheRead: 1000, cacheWrite: 10 }, price, 0.7);
+    const r = chargeFor({ input: 1000, output: 100, cacheRead: 1000, cacheWrite: 10 }, price, { costMultiplier: 0.7 });
     expect(r).toEqual({ cost: Math.ceil(4830 * 1.2), upstreamCost: Math.round(4830 * 0.7) });
+  });
+
+  const tiered = { ...price, flexMarkup: 0.8, batchMarkup: 0.8, priorityMultiplier: 2 };
+  it("prices flex and batch at their own markup, against half-price upstream", () => {
+    const u = { input: 1000, output: 100, cacheRead: 1000, cacheWrite: 10 };
+    expect(chargeFor(u, tiered, { costMultiplier: 1 }, "batch")).toEqual({ cost: Math.ceil(4830 * 0.8), upstreamCost: Math.round(4830 * 0.5) });
+    expect(chargeFor(u, tiered, { costMultiplier: 1 }, "flex")).toEqual({ cost: Math.ceil(4830 * 0.8), upstreamCost: Math.round(4830 * 0.5) });
+  });
+  it("prices priority at the vendor multiple times markup", () => {
+    const u = { input: 1000, output: 0, cacheRead: 0, cacheWrite: 0 };
+    expect(chargeFor(u, tiered, { costMultiplier: 1 }, "priority")).toEqual({ cost: Math.ceil(3000 * 2 * 1.2), upstreamCost: 6000 });
+  });
+  it("falls back to standard when the tier is not offered", () => {
+    const u = { input: 1000, output: 0, cacheRead: 0, cacheWrite: 0 };
+    expect(chargeFor(u, price, { costMultiplier: 1 }, "flex")).toEqual({ cost: 3600, upstreamCost: 3000 });
+  });
+  it("has no marginal upstream cost on committed-capacity channels", () => {
+    const u = { input: 1000, output: 0, cacheRead: 0, cacheWrite: 0 };
+    expect(chargeFor(u, price, { costMultiplier: 1, fixedCostHourly: 5 }).upstreamCost).toBe(0);
+  });
+});
+
+describe("service_tier handling", async () => {
+  const { applyRequestedTier } = await import("@/lib/tiers");
+  const price = { model: "m", inputPrice: 3, outputPrice: 15, cacheReadPrice: null, cacheWritePrice: null, markup: 1, maxOutputTokens: null, tierThreshold: null, tierInputPrice: null, tierOutputPrice: null, perRequestPrice: null, flexMarkup: null, batchMarkup: null, priorityMultiplier: null, enabled: true, updatedAt: new Date() };
+  const tiered = { ...price, flexMarkup: 0.8, priorityMultiplier: 2 };
+  it("only passes tiers the model is offered on", () => {
+    const b1: Record<string, unknown> = { service_tier: "priority" };
+    expect(applyRequestedTier("openai-chat", b1, price)).toBe("standard");
+    expect(b1.service_tier).toBeUndefined();
+    const b2: Record<string, unknown> = { service_tier: "flex" };
+    expect(applyRequestedTier("openai-responses", b2, tiered)).toBe("flex");
+    expect(b2.service_tier).toBe("flex");
+    const b3: Record<string, unknown> = { service_tier: "auto" };
+    expect(applyRequestedTier("openai-chat", b3, tiered)).toBe("standard");
+    expect(b3.service_tier).toBeUndefined();
+  });
+  it("strips Anthropic's service_tier", () => {
+    const b: Record<string, unknown> = { service_tier: "auto" };
+    expect(applyRequestedTier("anthropic-messages", b, tiered)).toBe("standard");
+    expect(b).toEqual({});
   });
 });
 
@@ -72,7 +113,7 @@ describe("formatting", async () => {
 
 describe("worst-case cost planning", async () => {
   const r = await import("@/lib/reservations");
-  const price = { model: "m", inputPrice: 2, outputPrice: 10, cacheReadPrice: null, cacheWritePrice: null, markup: 1.5, maxOutputTokens: null, tierThreshold: null, tierInputPrice: null, tierOutputPrice: null, perRequestPrice: null, enabled: true, updatedAt: new Date() };
+  const price = { model: "m", inputPrice: 2, outputPrice: 10, cacheReadPrice: null, cacheWritePrice: null, markup: 1.5, maxOutputTokens: null, tierThreshold: null, tierInputPrice: null, tierOutputPrice: null, perRequestPrice: null, flexMarkup: null, batchMarkup: null, priorityMultiplier: null, enabled: true, updatedAt: new Date() };
 
   it("counts text at 3 bytes/token and base64 blobs per blob", () => {
     expect(r.estimateInputTokens("x".repeat(300))).toBe(100);
@@ -113,5 +154,16 @@ describe("worst-case cost planning", async () => {
     const gem: Record<string, unknown> = { generationConfig: { temperature: 0 } };
     r.applyOutputCap("gemini", gem, 7);
     expect(gem).toEqual({ generationConfig: { temperature: 0, maxOutputTokens: 7 } });
+  });
+});
+
+describe("committed capacity", async () => {
+  const { fixedCostBetween } = await import("@/lib/capacity");
+  const ch = { fixedCostHourly: 2, createdAt: new Date("2026-01-01T00:00:00Z"), commitmentEndsAt: new Date("2026-01-02T00:00:00Z") };
+  it("charges the hourly rate only while the commitment runs", () => {
+    expect(fixedCostBetween(ch, new Date("2026-01-01T10:00:00Z"), new Date("2026-01-01T13:00:00Z"))).toBe(6_000_000);
+    expect(fixedCostBetween(ch, new Date("2025-12-31T00:00:00Z"), new Date("2026-01-01T01:00:00Z"))).toBe(2_000_000);
+    expect(fixedCostBetween(ch, new Date("2026-01-01T23:00:00Z"), new Date("2026-01-03T00:00:00Z"))).toBe(2_000_000);
+    expect(fixedCostBetween({ ...ch, fixedCostHourly: null }, new Date(0), new Date())).toBe(0);
   });
 });

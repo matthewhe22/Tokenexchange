@@ -18,6 +18,7 @@ import { generateRedeemCodes } from "@/lib/redeem";
 import { saveLimitSettings, saveRoutingSettings, saveSecuritySettings } from "@/lib/settings";
 import { PROVIDER_INFO } from "@/relay/providers/info";
 import { rearmLowBalanceSql } from "@/lib/notifications";
+import { zonedMidnight } from "@/lib/time";
 
 const str = (f: FormData, k: string) => String(f.get(k) ?? "").trim();
 const num = (f: FormData, k: string, d: number) => {
@@ -40,6 +41,11 @@ function redactUrl(raw: string): string {
   } catch {
     return "(unparseable URL)";
   }
+}
+
+function parseLocalDate(v: string): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v);
+  return m ? zonedMidnight(Number(m[1]), Number(m[2]), Number(m[3])) : null;
 }
 
 // ---------- channels ----------
@@ -87,6 +93,10 @@ export async function saveChannel(form: FormData) {
     priority: num(form, "priority", 0),
     weight: Math.max(1, num(form, "weight", 1)),
     costMultiplier: num(form, "costMultiplier", 1),
+    fixedCostHourly: str(form, "fixedCostHourly") === "" ? null : Math.max(0, num(form, "fixedCostHourly", 0)),
+    capacityTpm: str(form, "capacityTpm") === "" ? null : Math.max(1, Math.floor(num(form, "capacityTpm", 1))),
+    // Entered as a Melbourne (app time zone) calendar date: the commitment ends at local midnight.
+    commitmentEndsAt: parseLocalDate(str(form, "commitmentEndsAt")),
     enabled: form.get("enabled") === "on",
     // Saving a channel is an explicit admin decision: take it out of automatic recovery.
     autoDisabledAt: null,
@@ -155,6 +165,9 @@ export async function savePrice(form: FormData) {
     tierInputPrice: opt("tierInputPrice"),
     tierOutputPrice: opt("tierOutputPrice"),
     perRequestPrice: opt("perRequestPrice"),
+    flexMarkup: opt("flexMarkup"),
+    batchMarkup: opt("batchMarkup"),
+    priorityMultiplier: opt("priorityMultiplier"),
     enabled: form.get("enabled") === "on",
     updatedAt: new Date(),
   };

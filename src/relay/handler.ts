@@ -1,7 +1,8 @@
 import { waitUntil } from "@vercel/functions";
 import { chargeFor, getPrices, recordUsage, type ModelPrice } from "@/lib/billing";
 import { getActiveChannels, markChannelFailure, markChannelHealthy, type LoadedChannel } from "@/lib/channels";
-import { hit } from "@/lib/ratelimit";
+import { addToWindow, hit, peek } from "@/lib/ratelimit";
+import { applyRequestedTier, reportedTier, tierFactors, type Tier } from "@/lib/tiers";
 import { runMaintenance } from "@/lib/maintenance";
 import { applyOutputCap, planCost, releaseStaleReservations, reserve } from "@/lib/reservations";
 import { priceForGroup } from "@/lib/groups";
@@ -55,6 +56,8 @@ interface Ctx {
   settled: boolean;
   /** Set when the request was translated for an upstream speaking another protocol. */
   via?: Protocol;
+  /** Tier the request asked for (and was held at). */
+  tier: Tier;
 }
 
 interface Candidate {
@@ -67,9 +70,37 @@ function speechCharacters(body: Json): number {
   return typeof body?.input === "string" ? [...body.input].length : 0;
 }
 
-async function settleOnce(ctx: Ctx, ch: LoadedChannel | null, status: number, usage: Usage | null, error?: string) {
-  const { cost, upstreamCost } =
-    usage && ch ? chargeFor(usage, ctx.price, ch.costMultiplier) : { cost: 0, upstreamCost: 0 };
+/** Committed-capacity channels: a 429 means "full right now", not a broken channel. */
+export function isCapacityChannel(ch: Pick<LoadedChannel, "fixedCostHourly" | "capacityTpm">): boolean {
+  return ch.fixedCostHourly != null || ch.capacityTpm != null;
+}
+
+const tpmBucket = (channelId: number) => `tpm:ch:${channelId}`;
+
+/** Moves capacity channels that are already at their tokens-per-minute limit behind the others. */
+async function spillFullChannels(candidates: Candidate[]): Promise<Candidate[]> {
+  const full = new Set<number>();
+  await Promise.all(
+    candidates.map(async ({ ch }) => {
+      if (ch.capacityTpm != null && ch.capacityTpm > 0 && (await peek(tpmBucket(ch.id))) >= ch.capacityTpm) full.add(ch.id);
+    }),
+  );
+  if (!full.size) return candidates;
+  return [...candidates.filter((c) => !full.has(c.ch.id)), ...candidates.filter((c) => full.has(c.ch.id))];
+}
+
+/** Tier to bill: what an OpenAI upstream says it ran on, else what was requested. */
+function billedTier(ctx: Ctx, target: Protocol | undefined, reported: unknown): Tier {
+  const tier = (target === "openai-chat" || target === "openai-responses" ? reportedTier(reported) : null) ?? ctx.tier;
+  return tierFactors(ctx.price, tier) ? tier : "standard";
+}
+
+async function settleOnce(ctx: Ctx, ch: LoadedChannel | null, status: number, usage: Usage | null, error?: string, tier: Tier = ctx.tier) {
+  const { cost, upstreamCost } = usage && ch ? chargeFor(usage, ctx.price, ch, tier) : { cost: 0, upstreamCost: 0 };
+  if (usage && ch?.capacityTpm != null) {
+    const tokens = usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
+    waitUntil(addToWindow(tpmBucket(ch.id), tokens).catch(() => null));
+  }
   await recordUsage({
     userId: ctx.user.id,
     apiKeyId: ctx.apiKey.id,
@@ -85,6 +116,7 @@ async function settleOnce(ctx: Ctx, ch: LoadedChannel | null, status: number, us
     latencyMs: Date.now() - ctx.started,
     error,
     reservationId: ctx.reservationId,
+    serviceTier: usage ? tier : undefined,
   });
 }
 
@@ -92,12 +124,12 @@ async function settleOnce(ctx: Ctx, ch: LoadedChannel | null, status: number, us
  * Settles a request exactly once (later calls are ignored), retrying transient database errors.
  * If every attempt fails the hold stays in place and the stale-reservation sweep releases it.
  */
-async function settle(ctx: Ctx, ch: LoadedChannel | null, status: number, usage: Usage | null, error?: string) {
+async function settle(ctx: Ctx, ch: LoadedChannel | null, status: number, usage: Usage | null, error?: string, tier?: Tier) {
   if (ctx.settled) return;
   ctx.settled = true;
   for (let attempt = 0; ; attempt++) {
     try {
-      return await settleOnce(ctx, ch, status, usage, error);
+      return await settleOnce(ctx, ch, status, usage, error, tier);
     } catch (err) {
       if (attempt >= 2) {
         console.error("settle failed; usage not recorded", { userId: ctx.user.id, model: ctx.req.model, usage, err });
@@ -166,10 +198,19 @@ export async function relay(req: Request, protocol: Protocol, opts: RelayOptions
     }
   }
 
-  const [channels, routing] = await Promise.all([getActiveChannels(), getRoutingSettings()]);
+  // Flex / priority are OpenAI's own tiers: only official OpenAI channels can run them. If none
+  // serves the model, the request runs (and is billed) as standard.
+  let tier = applyRequestedTier(protocol, body, price);
+  const [allChannels, routing] = await Promise.all([getActiveChannels(), getRoutingSettings()]);
+  let channels = allChannels;
+  if (tier !== "standard") {
+    const openai = allChannels.filter((c) => c.provider === "openai");
+    if (orderChannels(openai, model, protocol, routing).length) channels = openai;
+    else tier = applyRequestedTier(protocol, body, { ...price, flexMarkup: null, priorityMultiplier: null });
+  }
   const affinityKey = routing.affinity ? `${apiKey.id}:${model}` : undefined;
-  const candidates: Candidate[] = orderChannels(channels, model, protocol, routing, Math.random, affinityKey).map((ch) => ({ ch, target: protocol }));
-  if (routing.allowConversion) {
+  let candidates: Candidate[] = orderChannels(channels, model, protocol, routing, Math.random, affinityKey).map((ch) => ({ ch, target: protocol }));
+  if (routing.allowConversion && tier === "standard") {
     // Channels that speak another protocol come after native ones (e.g. Claude via /v1/chat/completions).
     for (const target of conversionTargets(protocol)) {
       for (const ch of orderChannels(channels, model, target, routing, Math.random, affinityKey)) {
@@ -177,6 +218,7 @@ export async function relay(req: Request, protocol: Protocol, opts: RelayOptions
       }
     }
   }
+  candidates = await spillFullChannels(candidates);
   candidates.splice(Math.max(1, routing.maxAttempts));
   if (!candidates.length) return relayError(protocol, 503, `no upstream channel is available for '${model}'`);
 
@@ -184,7 +226,9 @@ export async function relay(req: Request, protocol: Protocol, opts: RelayOptions
   // never produce more than was held. settle() returns the difference.
   // Text-to-speech is priced per input character, carried in the "input token" slot.
   if (protocol === "openai-audio-speech") inputTokensOverride = speechCharacters(body);
-  const plan = planCost(protocol, body, rawText, price, inputTokensOverride);
+  // Held at the higher of the requested tier and standard, in case the upstream runs it as standard.
+  const sell = Math.max(price.markup, tierFactors(price, tier)?.sell ?? price.markup);
+  const plan = planCost(protocol, body, rawText, price, inputTokensOverride, sell);
   let held = await reserve(user.id, apiKey.id, plan);
   // Funds may be stuck in holds from killed functions; release this user's stale ones and retry.
   if (!held.ok && (await releaseStaleReservations(undefined, user.id).catch(() => 0)) > 0) {
@@ -201,7 +245,7 @@ export async function relay(req: Request, protocol: Protocol, opts: RelayOptions
   if (Math.random() < 0.01) waitUntil(runMaintenance(5 * 60_000).catch(() => null));
 
   const rreq: RelayRequest = { protocol, model, stream, body, headers: req.headers, form };
-  const ctx: Ctx = { user, apiKey, price, req: rreq, endpoint: opts.endpoint, started, reservationId: held.id, settled: false };
+  const ctx: Ctx = { user, apiKey, price, req: rreq, endpoint: opts.endpoint, started, reservationId: held.id, settled: false, tier };
   try {
     return await forward(ctx, candidates, routing.autoDisableAfter);
   } catch (err) {
@@ -252,7 +296,8 @@ async function forward(ctx: Ctx, candidates: Candidate[], autoDisableAfter: numb
       const text = await res.text().catch(() => "");
       const detail = `HTTP ${res.status}: ${text.slice(0, 500)}`;
       if (RETRYABLE.has(res.status) || (res.status === 400 && CHANNEL_FAULT.test(text))) {
-        waitUntil(markChannelFailure(ch.id, detail, autoDisableAfter));
+        // A full commitment (PTU at capacity) spills to the next channel without counting as a failure.
+        if (!(res.status === 429 && isCapacityChannel(ch))) waitUntil(markChannelFailure(ch.id, detail, autoDisableAfter));
         lastError = { status: res.status, message: detail };
         continue;
       }
@@ -289,7 +334,8 @@ async function forward(ctx: Ctx, candidates: Candidate[], autoDisableAfter: numb
             ? usageFromBody(target, json)
             : null;
       // Never fail a successful upstream call because bookkeeping failed; settle() logs and retries.
-      await settle(ctx, ch, res.status, usage, usage ? undefined : "no usage in upstream response");
+      const tier = billedTier(ctx, target, json?.service_tier);
+      await settle(ctx, ch, res.status, usage, usage ? undefined : "no usage in upstream response", tier);
       if (conv) {
         if (!json) throw new Error("upstream returned a non-JSON body for a translated request");
         return Response.json(conv.response(json, model), { status: res.status });
@@ -308,7 +354,7 @@ async function forward(ctx: Ctx, candidates: Candidate[], autoDisableAfter: numb
         parser.end();
         const usage = tracker.result();
         const message = error ? String(error instanceof Error ? error.message : error) : usage ? undefined : "no usage in stream";
-        await settle(ctx, ch, 200, usage, message);
+        await settle(ctx, ch, 200, usage, message, billedTier(ctx, target, tracker.serviceTier));
       },
     );
     const out = conv ? tapped.pipeThrough(conv.stream(model, ctx.req.body?.stream_options?.include_usage === true)) : tapped;

@@ -42,3 +42,9 @@ export async function markChannelFailure(id: number, error: string, autoDisableA
 export async function markChannelHealthy(id: number): Promise<void> {
   await getDb().update(schema.channels).set({ failCount: 0 }).where(eq(schema.channels.id, id));
 }
+
+/** Any channel by id, enabled or not (batches must be polled on the channel that runs them). */
+export async function loadChannel(id: number): Promise<LoadedChannel | null> {
+  const [row] = await getDb().select().from(schema.channels).where(eq(schema.channels.id, id));
+  return row ? { ...row, credentials: JSON.parse(decrypt(row.credentials)) } : null;
+}

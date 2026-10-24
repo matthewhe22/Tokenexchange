@@ -5,6 +5,7 @@ import { invalidateChannels } from "./channels";
 import { decrypt } from "./crypto";
 import { pruneRateLimits } from "./ratelimit";
 import { releaseStaleReservations } from "./reservations";
+import { pruneFiles, refreshPendingBatches } from "@/relay/batch";
 
 /** Test request to every auto-disabled channel; healthy ones are put back into rotation. */
 export async function probeDisabledChannels(): Promise<{ probed: number; recovered: number }> {
@@ -54,11 +55,16 @@ async function claimSlot(minIntervalMs: number): Promise<boolean> {
   return rows.length > 0;
 }
 
-/** Housekeeping: release stale holds, probe auto-disabled channels, prune rate-limit counters. */
+/**
+ * Housekeeping: release stale holds, probe auto-disabled channels, prune rate-limit counters,
+ * refresh (and bill) batches nobody is polling, delete expired batch input files.
+ */
 export async function runMaintenance(minIntervalMs = 0) {
   if (!(await claimSlot(minIntervalMs))) return null;
   const released = await releaseStaleReservations();
   const channels = await probeDisabledChannels();
   const prunedCounters = await pruneRateLimits();
-  return { released, ...channels, prunedCounters };
+  const batches = await refreshPendingBatches().catch((err) => (console.error("batch refresh failed", err), 0));
+  const prunedFiles = await pruneFiles();
+  return { released, ...channels, prunedCounters, batches, prunedFiles };
 }

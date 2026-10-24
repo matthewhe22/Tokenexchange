@@ -30,14 +30,14 @@ const OPENAI_PATHS: Partial<Record<Protocol, string>> = {
   rerank: "/rerank",
 };
 
-function buildOpenAI(req: RelayRequest, ch: ChannelRuntime): UpstreamCall {
-  const body = { ...req.body, model: ch.upstreamModel };
-  if (req.protocol === "openai-chat" && req.stream) {
-    // Ask for the trailing usage chunk so streamed requests can be billed.
-    body.stream_options = { ...(body.stream_options ?? {}), include_usage: true };
-  }
-  let base: string;
+/** Base URL (…/v1), auth headers and query string for an OpenAI-style channel (OpenAI, Azure, relays). */
+export function openaiEndpoint(ch: Pick<ChannelRuntime, "provider" | "baseUrl" | "config" | "credentials">): {
+  base: string;
+  headers: Record<string, string>;
+  query: string;
+} {
   const headers: Record<string, string> = {};
+  let base: string;
   if (ch.provider === "azure_openai") {
     base = ch.baseUrl ?? `https://${need(ch.config.resource, "config.resource or base URL")}.openai.azure.com/openai/v1`;
     headers["api-key"] = need(ch.credentials.apiKey, "apiKey");
@@ -45,8 +45,28 @@ function buildOpenAI(req: RelayRequest, ch: ChannelRuntime): UpstreamCall {
     base = ch.provider === "openai" ? (ch.baseUrl ?? "https://api.openai.com/v1") : need(ch.baseUrl, "base URL");
     headers.authorization = `Bearer ${need(ch.credentials.apiKey, "apiKey")}`;
   }
-  let url = trim(base) + OPENAI_PATHS[req.protocol]!;
-  if (ch.provider === "azure_openai" && ch.config.apiVersion) url += `?api-version=${encodeURIComponent(ch.config.apiVersion)}`;
+  const query = ch.provider === "azure_openai" && ch.config.apiVersion ? `?api-version=${encodeURIComponent(ch.config.apiVersion)}` : "";
+  return { base: trim(base), headers, query };
+}
+
+/** API root (without /v1) and auth headers for an Anthropic-style channel. */
+export function anthropicEndpoint(ch: Pick<ChannelRuntime, "provider" | "baseUrl" | "credentials">, version = "2023-06-01") {
+  const root = ch.provider === "anthropic" ? (ch.baseUrl ?? "https://api.anthropic.com") : need(ch.baseUrl, "base URL");
+  const key = need(ch.credentials.apiKey, "apiKey");
+  const headers: Record<string, string> = { "anthropic-version": version, "x-api-key": key };
+  // Many relays only accept bearer auth.
+  if (ch.provider === "anthropic_compatible") headers.authorization = `Bearer ${key}`;
+  return { root: trim(root).replace(/\/v1$/, ""), headers };
+}
+
+function buildOpenAI(req: RelayRequest, ch: ChannelRuntime): UpstreamCall {
+  const body = { ...req.body, model: ch.upstreamModel };
+  if (req.protocol === "openai-chat" && req.stream) {
+    // Ask for the trailing usage chunk so streamed requests can be billed.
+    body.stream_options = { ...(body.stream_options ?? {}), include_usage: true };
+  }
+  const { base, headers, query } = openaiEndpoint(ch);
+  const url = base + OPENAI_PATHS[req.protocol]! + query;
   if (req.form) {
     const form = new FormData();
     for (const [k, v] of req.form.entries()) if (k !== "model") form.append(k, v);
@@ -57,22 +77,11 @@ function buildOpenAI(req: RelayRequest, ch: ChannelRuntime): UpstreamCall {
   return { request: jsonRequest(url, headers, body), streamFormat: "sse" };
 }
 
-function anthropicHeaders(req: RelayRequest): Record<string, string> {
-  const h: Record<string, string> = { "anthropic-version": req.headers.get("anthropic-version") ?? "2023-06-01" };
-  const beta = req.headers.get("anthropic-beta");
-  if (beta) h["anthropic-beta"] = beta;
-  return h;
-}
-
 function buildAnthropic(req: RelayRequest, ch: ChannelRuntime): UpstreamCall {
-  const root =
-    ch.provider === "anthropic" ? (ch.baseUrl ?? "https://api.anthropic.com") : need(ch.baseUrl, "base URL");
-  const key = need(ch.credentials.apiKey, "apiKey");
-  const headers: Record<string, string> = { ...anthropicHeaders(req), "x-api-key": key };
-  // Many relays only accept bearer auth.
-  if (ch.provider === "anthropic_compatible") headers.authorization = `Bearer ${key}`;
-  const url = trim(root).replace(/\/v1$/, "") + "/v1/messages";
-  return { request: jsonRequest(url, headers, { ...req.body, model: ch.upstreamModel }), streamFormat: "sse" };
+  const { root, headers } = anthropicEndpoint(ch, req.headers.get("anthropic-version") ?? "2023-06-01");
+  const beta = req.headers.get("anthropic-beta");
+  if (beta) headers["anthropic-beta"] = beta;
+  return { request: jsonRequest(root + "/v1/messages", headers, { ...req.body, model: ch.upstreamModel }), streamFormat: "sse" };
 }
 
 async function buildBedrock(req: RelayRequest, ch: ChannelRuntime): Promise<UpstreamCall> {

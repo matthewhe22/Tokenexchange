@@ -18,6 +18,9 @@ export interface PublicPrice {
   cacheWrite: number | null;
   perUnit: number | null;
   tier: { threshold: number; input: number; output: number } | null;
+  /** Discounted tiers: input / output USD per 1M tokens. */
+  batch: { input: number; output: number } | null;
+  flex: { input: number; output: number } | null;
 }
 
 /** Customer-facing prices (list x markup) in USD per 1M tokens, grouped by vendor. */
@@ -37,6 +40,8 @@ export async function publicPriceList(): Promise<PublicPrice[]> {
         p.tierThreshold != null
           ? { threshold: p.tierThreshold, input: (p.tierInputPrice ?? p.inputPrice) * p.markup, output: (p.tierOutputPrice ?? p.outputPrice) * p.markup }
           : null,
+      batch: p.batchMarkup != null ? { input: p.inputPrice * p.batchMarkup, output: p.outputPrice * p.batchMarkup } : null,
+      flex: p.flexMarkup != null ? { input: p.inputPrice * p.flexMarkup, output: p.outputPrice * p.flexMarkup } : null,
     }))
     .sort((a, b) => order.indexOf(a.vendor) - order.indexOf(b.vendor) || a.model.localeCompare(b.model));
 }

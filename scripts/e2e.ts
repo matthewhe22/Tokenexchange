@@ -20,7 +20,7 @@ const db = drizzle(client, { schema });
 const mock = await startMockUpstream(MOCK_PORT);
 
 await db.execute(
-  sql`truncate usage_logs, balance_transactions, api_keys, channels, model_prices, settings, users, pricing_groups, audit_logs, redeem_codes, rate_limits, reservations, auth_tokens restart identity cascade`,
+  sql`truncate usage_logs, balance_transactions, api_keys, channels, model_prices, settings, users, pricing_groups, audit_logs, redeem_codes, rate_limits, reservations, auth_tokens, files, batches restart identity cascade`,
 );
 
 const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
@@ -49,6 +49,10 @@ await db.insert(schema.modelPrices).values([
   { model: "tts-test", inputPrice: 15, outputPrice: 0 },
   { model: "whisper-test", inputPrice: 0, outputPrice: 0, perRequestPrice: 0.006 },
   { model: "rerank-test", inputPrice: 0.05, outputPrice: 0 },
+  { model: "flex-test", inputPrice: 2, outputPrice: 8, flexMarkup: 0.8 },
+  { model: "gpt-batch", inputPrice: 2, outputPrice: 8, batchMarkup: 0.8 },
+  { model: "claude-batch", inputPrice: 3, outputPrice: 15, batchMarkup: 0.8 },
+  { model: "ptu-test", inputPrice: 1, outputPrice: 1 },
 ]);
 
 type NewChannel = typeof schema.channels.$inferInsert;
@@ -59,7 +63,10 @@ const channel = (c: Omit<NewChannel, "credentials"> & { credentials: Record<stri
 await db.insert(schema.channels).values([
   // highest priority but broken: requests must fail over to the next channel
   channel({ name: "broken reseller", provider: "openai_compatible", source: "reseller", baseUrl: `${MOCK}/broken/v1`, credentials: { apiKey: "x" }, models: ["gpt-test"], priority: 10 }),
-  channel({ name: "openai official", provider: "openai", source: "official", baseUrl: `${MOCK}/openai/v1`, credentials: { apiKey: "up-openai" }, models: ["gpt-test", "embed-test", "tier-test", "dalle-test", "tts-test", "whisper-test"], modelMapping: { "gpt-test": "gpt-upstream", "whisper-test": "whisper-upstream" }, costMultiplier: 0.9 }),
+  channel({ name: "openai official", provider: "openai", source: "official", baseUrl: `${MOCK}/openai/v1`, credentials: { apiKey: "up-openai" }, models: ["gpt-test", "embed-test", "tier-test", "dalle-test", "tts-test", "whisper-test", "flex-test", "gpt-batch", "ptu-test"], modelMapping: { "gpt-test": "gpt-upstream", "whisper-test": "whisper-upstream", "gpt-batch": "gpt-4o-batch-up" }, costMultiplier: 0.9 }),
+  // committed capacity that is always full: traffic spills to the pay-as-you-go channel above
+  channel({ name: "ptu", provider: "azure_openai", source: "cloud", baseUrl: `${MOCK}/ptu/v1`, credentials: { apiKey: "up-azure" }, models: ["ptu-test"], priority: 10, fixedCostHourly: 1, capacityTpm: 1000 }),
+  channel({ name: "anthropic official", provider: "anthropic", source: "official", baseUrl: `${MOCK}/anthropic`, credentials: { apiKey: "up-anthropic" }, models: ["claude-batch"], modelMapping: { "claude-batch": "claude-up" } }),
   channel({ name: "reranker", provider: "openai_compatible", source: "reseller", baseUrl: `${MOCK}/openai/v1`, credentials: { apiKey: "up-openai" }, models: ["rerank-test"] }),
   channel({ name: "creditless", provider: "anthropic_compatible", source: "reseller", baseUrl: `${MOCK}/creditless`, credentials: { apiKey: "x" }, models: ["fault-test"], priority: 9 }),
   channel({ name: "azure", provider: "azure_openai", source: "cloud", baseUrl: `${MOCK}/azure/openai/v1`, credentials: { apiKey: "up-azure" }, models: ["azure-test"] }),
@@ -447,6 +454,144 @@ await step("Redeem codes credit once per user and respect max uses", async () =>
   assert.match(((await redeemCode(other.id, code)) as { error: string }).error, /already been used/);
   assert.match(((await redeemCode(user.id, "TX-NOPE-NOPE-NOPE-NOPE")) as { error: string }).error, /not valid/);
   logs = (await db.select({ n: sql<number>`count(*)::int` }).from(schema.usageLogs))[0].n;
+});
+
+// ---------- service tiers, committed capacity, batches ----------
+const lastUpstream = (prefix: string) => [...mock.received].reverse().find((r) => r.path.startsWith(prefix))!;
+
+await step("service_tier: a tier the model is not offered on is stripped; flex is billed at the flex markup", async () => {
+  let res = await post("/v1/chat/completions", { model: "gpt-test", service_tier: "priority", messages: [{ role: "user", content: "hi" }] });
+  assert.equal(res.status, 200);
+  await logsSettled(++logs);
+  assert.equal(lastUpstream("/openai/v1/chat").body.service_tier, undefined);
+  assert.equal((await lastLog()).serviceTier, null);
+
+  res = await post("/v1/chat/completions", { model: "flex-test", service_tier: "flex", messages: [{ role: "user", content: "hi" }] });
+  assert.equal(res.status, 200);
+  assert.equal((await res.json()).service_tier, "flex");
+  await logsSettled(++logs);
+  assert.equal(lastUpstream("/openai/v1/chat").body.service_tier, "flex");
+  const log = await lastLog();
+  // 16 input + 4 cached (cache price falls back to input) at $2, 5 output at $8 = 80 list
+  assert.equal(log.serviceTier, "flex");
+  assert.equal(log.cost, 64);
+  assert.equal(log.upstreamCost, 36); // 80 x 0.5 (flex) x 0.9 (channel)
+
+  res = await post("/v1/messages", { model: "claude-test", max_tokens: 10, service_tier: "auto", messages: [{ role: "user", content: "hi" }] }, { "x-api-key": key });
+  assert.equal(res.status, 200);
+  await logsSettled(++logs);
+  assert.equal("service_tier" in lastUpstream("/anthropic/v1/messages").body, false);
+});
+
+await step("A full committed-capacity channel spills over without counting as a failure", async () => {
+  const [ptu] = await db.select().from(schema.channels).where(eq(schema.channels.name, "ptu"));
+  const res = await post("/v1/chat/completions", { model: "ptu-test", messages: [{ role: "user", content: "hi" }] });
+  assert.equal(res.status, 200);
+  await logsSettled(++logs);
+  assert.ok(lastUpstream("/ptu/"), "the PTU was tried first");
+  assert.notEqual((await lastLog()).channelId, ptu.id);
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal((await db.select().from(schema.channels).where(eq(schema.channels.id, ptu.id)))[0].failCount, 0);
+
+  // Over its tokens-per-minute capacity, the PTU is not even tried.
+  const now = Math.floor(Date.now() / 1000);
+  await db.insert(schema.rateLimits).values({ bucket: `tpm:ch:${ptu.id}`, windowStart: now - (now % 60), count: 5000 }).onConflictDoUpdate({ target: schema.rateLimits.bucket, set: { windowStart: now - (now % 60), count: 5000 } });
+  const before = mock.received.filter((r) => r.path.startsWith("/ptu/")).length;
+  assert.equal((await post("/v1/chat/completions", { model: "ptu-test", messages: [{ role: "user", content: "hi" }] })).status, 200);
+  await logsSettled(++logs);
+  assert.equal(mock.received.filter((r) => r.path.startsWith("/ptu/")).length, before);
+});
+
+await step("OpenAI batch: upload, create (hold), poll (bill at batch price), download output", async () => {
+  const line = (id: string) => JSON.stringify({ custom_id: id, method: "POST", url: "/v1/chat/completions", body: { model: "gpt-batch", messages: [{ role: "user", content: "hi" }] } });
+  const form = new FormData();
+  form.set("purpose", "batch");
+  form.set("file", new Blob([[line("a"), line("b"), line("c-fail")].join("\n")]), "in.jsonl");
+  let res = await fetch(`${BASE}/v1/files`, { method: "POST", headers: { authorization: `Bearer ${key}` }, body: form });
+  assert.equal(res.status, 200);
+  const file = await res.json();
+  assert.equal(file.purpose, "batch");
+
+  const before = await balanceOfUser();
+  res = await post("/v1/batches", { input_file_id: file.id, endpoint: "/v1/chat/completions", completion_window: "24h", metadata: { job: "e2e" } });
+  assert.equal(res.status, 200, await res.clone().text());
+  const created = await res.json();
+  assert.match(created.id, /^batch_tx/);
+  assert.equal(created.input_file_id, file.id);
+  const sent = lastUpstream("/openai/v1/batches");
+  assert.equal(sent.body.endpoint, "/v1/chat/completions");
+  assert.ok((await balanceOfUser()) < before, "the worst case is held");
+
+  res = await fetch(`${BASE}/v1/batches/${created.id}`, { headers: { authorization: `Bearer ${key}` } });
+  const batch = await res.json();
+  assert.equal(batch.status, "completed");
+  assert.deepEqual(batch.request_counts, { total: 3, completed: 2, failed: 1 });
+  assert.match(batch.output_file_id, /^file-tx/);
+  assert.ok(batch.error_file_id);
+  logs++;
+  const log = await lastLog();
+  // 2 successful requests x (100 in, 10 out) = 200 x $2 + 20 x $8 = 560 list
+  assert.equal(log.model, "gpt-batch");
+  assert.equal(log.serviceTier, "batch");
+  assert.equal(log.cost, 448); // x 0.8
+  assert.equal(log.upstreamCost, 252); // x 0.5 x 0.9
+  assert.equal(await balanceOfUser(), before - 448, "the hold is released and only usage is billed");
+
+  // Polling again does not bill twice.
+  await fetch(`${BASE}/v1/batches/${created.id}`, { headers: { authorization: `Bearer ${key}` } });
+  assert.equal(await balanceOfUser(), before - 448);
+
+  res = await fetch(`${BASE}/v1/files/${batch.output_file_id}/content`, { headers: { authorization: `Bearer ${key}` } });
+  const out = (await res.text()).trim().split("\n").map((l) => JSON.parse(l));
+  assert.deepEqual(out.map((l) => l.custom_id), ["a", "b"]);
+  assert.equal(out[0].response.body.model, "gpt-batch", "upstream model ids are not exposed");
+
+  const list = await (await fetch(`${BASE}/v1/batches?limit=5`, { headers: { authorization: `Bearer ${key}` } })).json();
+  assert.equal(list.data[0].id, created.id);
+
+  res = await post("/v1/batches", { input_file_id: file.id, endpoint: "/v1/embeddings" });
+  assert.equal(res.status, 400, "lines must match the batch endpoint");
+});
+
+await step("Anthropic message batch: create, poll, bill, results, delete", async () => {
+  const before = await balanceOfUser();
+  let res = await post(
+    "/v1/messages/batches",
+    {
+      requests: [
+        { custom_id: "one", params: { model: "claude-batch", max_tokens: 100, messages: [{ role: "user", content: "hi" }] } },
+        // no max_tokens: the gateway caps it at what is held
+        { custom_id: "two", params: { model: "claude-batch", messages: [{ role: "user", content: "hi" }] } },
+      ],
+    },
+    { "x-api-key": key },
+  );
+  assert.equal(res.status, 200, await res.clone().text());
+  const created = await res.json();
+  assert.match(created.id, /^msgbatch_tx/);
+  assert.equal(created.processing_status, "in_progress");
+
+  const batch = await (await fetch(`${BASE}/v1/messages/batches/${created.id}`, { headers: { "x-api-key": key } })).json();
+  assert.equal(batch.processing_status, "ended");
+  assert.equal(batch.results_url, `${BASE}/v1/messages/batches/${created.id}/results`);
+  logs++;
+  const log = await lastLog();
+  // 2 x (200 in, 20 out) = 400 x $3 + 40 x $15 = 1800 list
+  assert.equal(log.cost, 1440);
+  assert.equal(log.upstreamCost, 900);
+  assert.equal(await balanceOfUser(), before - 1440);
+
+  const results = (await (await fetch(batch.results_url, { headers: { "x-api-key": key } })).text()).trim().split("\n").map((l) => JSON.parse(l));
+  assert.deepEqual(results.map((r) => r.result.message.model), ["claude-batch", "claude-batch"]);
+
+  res = await fetch(`${BASE}/v1/messages/batches/${created.id}`, { method: "DELETE", headers: { "x-api-key": key } });
+  assert.equal((await res.json()).type, "message_batch_deleted");
+});
+
+await step("Batches are refused for models without a batch price", async () => {
+  const res = await post("/v1/messages/batches", { requests: [{ custom_id: "x", params: { model: "claude-test", max_tokens: 5, messages: [] } }] }, { "x-api-key": key });
+  assert.equal(res.status, 400);
+  assert.match((await res.json()).error.message, /not offered/);
 });
 
 // ---------- Stripe webhooks ----------

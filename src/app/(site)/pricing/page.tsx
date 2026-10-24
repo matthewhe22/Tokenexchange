@@ -34,6 +34,8 @@ export default async function PricingPage() {
                           Prompts over {p.tier.threshold.toLocaleString()} tokens: {perMillion(p.tier.input)} in / {perMillion(p.tier.output)} out
                         </div>
                       )}
+                      {p.batch && <div className="muted">Batch API: {perMillion(p.batch.input)} in / {perMillion(p.batch.output)} out</div>}
+                      {p.flex && <div className="muted">Flex: {perMillion(p.flex.input)} in / {perMillion(p.flex.output)} out</div>}
                     </td>
                   </tr>
                 ))}

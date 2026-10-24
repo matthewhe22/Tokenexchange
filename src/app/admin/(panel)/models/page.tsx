@@ -18,6 +18,9 @@ function PriceFields({ p }: { p?: Price }) {
       <div><label>Above threshold: input $/1M</label><input name="tierInputPrice" type="number" step="any" defaultValue={v(p?.tierInputPrice)} /></div>
       <div><label>Above threshold: output $/1M</label><input name="tierOutputPrice" type="number" step="any" defaultValue={v(p?.tierOutputPrice)} /></div>
       <div><label>Per unit $ (image / search / minute)</label><input name="perRequestPrice" type="number" step="any" defaultValue={v(p?.perRequestPrice)} /></div>
+      <div><label>Batch markup (× list; upstream pays 0.5×)</label><input name="batchMarkup" type="number" step="any" placeholder="e.g. 0.8 — blank = no batch" defaultValue={v(p?.batchMarkup)} /></div>
+      <div><label>Flex markup (× list; OpenAI only, upstream 0.5×)</label><input name="flexMarkup" type="number" step="any" placeholder="e.g. 0.8 — blank = no flex" defaultValue={v(p?.flexMarkup)} /></div>
+      <div><label>Priority price (× list, OpenAI&apos;s ratio)</label><input name="priorityMultiplier" type="number" step="any" placeholder="e.g. 1.8 — blank = no priority" defaultValue={v(p?.priorityMultiplier)} /></div>
     </>
   );
 }
@@ -34,6 +37,12 @@ export default async function ModelsPage() {
         request uses the tier prices. Per-unit prices apply to image generation (per image), rerank (per search) and
         duration-billed transcription (per started minute).
       </p>
+      <p className="muted">
+        Discounted tiers: OpenAI, Anthropic and Azure charge half of list for batches (and OpenAI for <span className="mono">service_tier: &quot;flex&quot;</span>).
+        Set what customers pay as a multiple of list — 0.8 sells at list − 20% for a 37.5% margin. Priority is billed at the
+        priority multiple × markup. A <span className="mono">service_tier</span> the model is not offered on is removed from the
+        request, so customers can never trigger a higher upstream price than they are billed.
+      </p>
       {prices.map((p) => (
         <details key={p.model} className="card">
           <summary className="row" style={{ cursor: "pointer", justifyContent: "space-between" }}>
@@ -42,6 +51,9 @@ export default async function ModelsPage() {
               ${p.inputPrice} / ${p.outputPrice} per 1M · ×{p.markup}
               {p.tierThreshold ? ` · tier >${p.tierThreshold.toLocaleString()}` : ""}
               {p.perRequestPrice ? ` · $${p.perRequestPrice}/unit` : ""}
+              {p.batchMarkup != null ? ` · batch ×${p.batchMarkup}` : ""}
+              {p.flexMarkup != null ? ` · flex ×${p.flexMarkup}` : ""}
+              {p.priorityMultiplier != null ? ` · priority ×${p.priorityMultiplier}` : ""}
               {p.enabled ? "" : " · disabled"}
             </span>
           </summary>

@@ -5,7 +5,7 @@ import { ChannelForm } from "@/components/channel-form";
 import { ChannelTest } from "@/components/channel-test";
 import { decrypt } from "@/lib/crypto";
 import { deleteChannel, saveChannel } from "../../../actions";
-import { formatDateTime } from "@/lib/time";
+import { formatDate, formatDateTime } from "@/lib/time";
 
 export default async function ChannelPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -44,6 +44,9 @@ export default async function ChannelPage({ params }: { params: Promise<{ id: st
           priority: c.priority,
           weight: c.weight,
           costMultiplier: c.costMultiplier,
+          fixedCostHourly: c.fixedCostHourly,
+          capacityTpm: c.capacityTpm,
+          commitmentEndsAt: c.commitmentEndsAt ? formatDate(c.commitmentEndsAt) : "",
           enabled: c.enabled,
           storedCredentials: stored,
         }}

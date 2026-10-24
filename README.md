@@ -15,7 +15,13 @@ sources you buy from: official vendors, cloud platforms and resellers.
 - Billing safety: every request holds its worst-case cost before calling upstream and the output is capped to what
   was held, so concurrent requests cannot overdraw; per-key and per-user rate limits
 - Pricing: per-token with cache read/write, long-context tiers, per-unit (images, searches, minutes), customer
-  pricing groups (e.g. wholesale discounts)
+  pricing groups (e.g. wholesale discounts), and discounted tiers: batch and OpenAI flex (upstream charges half of
+  list; you set the customer price) and OpenAI priority
+- Batch API: OpenAI `/v1/files` + `/v1/batches` and Anthropic `/v1/messages/batches`, forwarded to the upstream's batch
+  API. The worst case is held on creation and the real usage is billed when the batch ends
+- Committed capacity (Azure PTU, provisioned throughput, reserved instances): channels with a fixed hourly cost and a
+  tokens-per-minute capacity; overflow and 429s spill to pay-as-you-go channels; a Capacity page shows utilization,
+  break-even utilization, margin and commitment end dates
 - Admin console: channels (with live test, auto-disable and automatic recovery), prices, routing (source toggles,
   channel affinity, protocol conversion), rate limits, users, pricing groups, redeem codes, balance adjustments,
   usage logs, audit log, margin dashboard; optional "require 2FA for admins"
@@ -36,6 +42,8 @@ sources you buy from: official vendors, cloud platforms and resellers.
 | Rerank | `POST /v1/rerank` | Bearer |
 | Anthropic token counting (free) | `POST /v1/messages/count_tokens` | `x-api-key` or Bearer |
 | Model list | `GET /v1/models` | any of the above |
+| OpenAI Batch | `POST/GET /v1/files`, `GET /v1/files/{id}/content`, `POST/GET /v1/batches`, `GET /v1/batches/{id}`, `POST /v1/batches/{id}/cancel` | Bearer |
+| Anthropic Message Batches | `POST/GET /v1/messages/batches`, `GET/DELETE /v1/messages/batches/{id}`, `…/cancel`, `…/results` | `x-api-key` or Bearer |
 
 `/v1/chat/completions` also serves Claude and Gemini models by translating to the Anthropic / Gemini APIs
 (tools, images, streaming and usage included), so OpenAI-SDK-only clients can use every model.
@@ -58,6 +66,18 @@ How routing works:
 - 400-class client errors are returned to the caller unchanged and do not trigger a retry.
 
 Billing: customer price = list price × model `markup`; upstream cost = list price × channel `cost multiplier`. The dashboard shows gross margin per source.
+
+- **`service_tier`**: OpenAI's `flex` and `priority` are only passed upstream when the model has a flex / priority price
+  (and only to official OpenAI channels); otherwise the field is removed. Requests are billed at the tier the upstream
+  reports. Anthropic's `service_tier` is always removed.
+- **Batches** run on OpenAI, Azure OpenAI and Anthropic channels at half of list, and are billed at the model's batch
+  markup (e.g. 0.8 = list − 20%). Each batch is held against the balance for up to 48 hours. It is refreshed whenever
+  the customer polls it and by the maintenance job, and billed once it ends. Bedrock / Vertex / Gemini batches (which
+  need S3 / GCS) are not supported. Uploaded input files are kept for 30 days.
+- **Committed capacity**: a channel with a fixed hourly cost has no per-request upstream cost; its commitment is
+  counted on the dashboard pro rata and on the Capacity page. Give it a higher priority than a pay-as-you-go channel
+  for the same models. Above its tokens-per-minute capacity it is tried last, and a 429 from it is not counted as a
+  failure. Use Upstash Redis for the per-minute counters under real traffic.
 All amounts are stored as integer micro-USD.
 
 ## Local development

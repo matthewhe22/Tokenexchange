@@ -50,6 +50,13 @@
       "when": 1792845226327,
       "tag": "0006_p1_review",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1792879423229,
+      "tag": "0007_capacity_tiers_batches",
+      "breakpoints": true
     }
   ]
 }

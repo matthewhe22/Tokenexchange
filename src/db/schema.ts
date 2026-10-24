@@ -95,6 +95,13 @@ export const channels = pgTable("channels", {
   weight: integer("weight").notNull().default(1),
   // What this channel costs us relative to list price (0.8 = we pay 80%). Used for margin reports.
   costMultiplier: doublePrecision("cost_multiplier").notNull().default(1),
+  // Committed capacity (Azure PTU, Bedrock / Vertex provisioned throughput, Fireworks reserved):
+  // a take-or-pay price in USD per hour. When set, requests on this channel have no marginal cost
+  // and the commitment is reported on the Capacity page instead.
+  fixedCostHourly: doublePrecision("fixed_cost_hourly"),
+  // Tokens per minute the commitment can serve; traffic above it goes to the next channel first.
+  capacityTpm: integer("capacity_tpm"),
+  commitmentEndsAt: timestamp("commitment_ends_at", { withTimezone: true }),
   enabled: boolean("enabled").notNull().default(true),
   failCount: integer("fail_count").notNull().default(0),
   lastError: text("last_error"),
@@ -122,6 +129,13 @@ export const modelPrices = pgTable("model_prices", {
   tierOutputPrice: doublePrecision("tier_output_price"),
   // USD per billable unit (an image, a rerank search, a transcription) for models not priced in tokens.
   perRequestPrice: doublePrecision("per_request_price"),
+  // Discounted tiers. The upstream charges half of list for flex and batch; these set what the
+  // customer pays as a multiple of list (e.g. 0.8 = list - 20%). null = tier not offered.
+  flexMarkup: doublePrecision("flex_markup"),
+  batchMarkup: doublePrecision("batch_markup"),
+  // OpenAI priority processing: the vendor's priority price as a multiple of list (e.g. 1.8).
+  // Customers pay that times `markup`. null = priority not offered, the request runs as standard.
+  priorityMultiplier: doublePrecision("priority_multiplier"),
   enabled: boolean("enabled").notNull().default(true),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -152,6 +166,8 @@ export const usageLogs = pgTable(
     // estimated upstream cost (list price x channel cost multiplier)
     upstreamCost: bigint("upstream_cost", { mode: "number" }).notNull().default(0),
     latencyMs: integer("latency_ms").notNull().default(0),
+    // flex / priority / batch; null = standard
+    serviceTier: text("service_tier"),
     error: text("error"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -199,6 +215,8 @@ export const reservations = pgTable(
       .references(() => users.id, { onDelete: "cascade" }),
     apiKeyId: integer("api_key_id"),
     amount: bigint("amount", { mode: "number" }).notNull(),
+    // Long-running holds (batches) are not stale before this time.
+    holdUntil: timestamp("hold_until", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("reservations_created_idx").on(t.createdAt)],
@@ -240,3 +258,58 @@ export const redeemCodes = pgTable("redeem_codes", {
   createdBy: integer("created_by"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+
+// Files uploaded for batches (stored inline: Vercel caps request bodies at 4.5 MB), and batch
+// output files, which stay on the upstream and are streamed through on download.
+export const files = pgTable(
+  "files",
+  {
+    id: text("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    purpose: text("purpose").notNull(),
+    filename: text("filename").notNull(),
+    bytes: integer("bytes").notNull(),
+    content: text("content"),
+    batchId: text("batch_id"),
+    channelId: integer("channel_id"),
+    upstreamFileId: text("upstream_file_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("files_user_idx").on(t.userId, t.createdAt)],
+);
+
+// Asynchronous batches forwarded to an upstream batch API (half price upstream).
+export const batches = pgTable(
+  "batches",
+  {
+    id: text("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    apiKeyId: integer("api_key_id").notNull(),
+    api: text("api", { enum: ["openai", "anthropic"] }).notNull(),
+    // Per-request endpoint, e.g. /v1/chat/completions or /v1/messages
+    endpoint: text("endpoint").notNull(),
+    models: text("models").array().notNull(),
+    channelId: integer("channel_id"),
+    upstreamId: text("upstream_id"),
+    inputFileId: text("input_file_id"),
+    requestCount: integer("request_count").notNull(),
+    // OpenAI status, or Anthropic processing_status
+    status: text("status").notNull(),
+    // Last batch object returned by the upstream
+    upstream: jsonb("upstream"),
+    metadata: jsonb("metadata"),
+    reservationId: bigint("reservation_id", { mode: "number" }),
+    cost: bigint("cost", { mode: "number" }).notNull().default(0),
+    upstreamCost: bigint("upstream_cost", { mode: "number" }).notNull().default(0),
+    lastPolledAt: timestamp("last_polled_at", { withTimezone: true }),
+    settlingAt: timestamp("settling_at", { withTimezone: true }),
+    settledAt: timestamp("settled_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("batches_user_idx").on(t.userId, t.createdAt), index("batches_settled_idx").on(t.settledAt)],
+);

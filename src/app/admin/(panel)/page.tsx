@@ -1,5 +1,6 @@
 import { desc, gte, sql } from "drizzle-orm";
 import { getDb, schema } from "@/db";
+import { fixedCostsBySource } from "@/lib/capacity";
 import { formatUsd } from "@/lib/money";
 import { formatDateTime, startOfToday, tzLabel } from "@/lib/time";
 
@@ -32,8 +33,16 @@ export default async function Dashboard() {
     .groupBy(schema.channels.source);
 
   const channels = await db.select().from(schema.channels).orderBy(desc(schema.channels.failCount));
+  // Committed capacity costs the same whether used or not: count today's share of it.
+  const fixed = await fixedCostsBySource(since, new Date());
+  const fixedTotal = [...fixed.values()].reduce((a, b) => a + b, 0);
   const revenue = Number(today.revenue);
-  const upstream = Number(today.upstream);
+  const upstream = Number(today.upstream) + fixedTotal;
+  const sources = new Set([...bySource.map((r) => r.source), ...fixed.keys()]);
+  const sourceRows = [...sources].map((source) => {
+    const r = bySource.find((x) => x.source === source);
+    return { source, requests: r?.requests ?? 0, revenue: Number(r?.revenue ?? 0), upstream: Number(r?.upstream ?? 0) + (fixed.get(source) ?? 0) };
+  });
 
   return (
     <>
@@ -43,7 +52,7 @@ export default async function Dashboard() {
         <Stat label="Errors" value={String(today.errors)} />
         <Stat label="Tokens" value={Number(today.tokens).toLocaleString()} />
         <Stat label="Revenue" value={formatUsd(revenue)} />
-        <Stat label="Upstream cost (est.)" value={formatUsd(upstream)} />
+        <Stat label={fixedTotal ? `Upstream cost (est., incl. ${formatUsd(fixedTotal)} committed)` : "Upstream cost (est.)"} value={formatUsd(upstream)} />
         <Stat label="Gross margin" value={`${formatUsd(revenue - upstream)}${revenue ? ` (${(((revenue - upstream) / revenue) * 100).toFixed(1)}%)` : ""}`} />
       </div>
 
@@ -52,16 +61,16 @@ export default async function Dashboard() {
         <table>
           <thead><tr><th>Source</th><th>Requests</th><th>Revenue</th><th>Upstream</th><th>Margin</th></tr></thead>
           <tbody>
-            {bySource.map((r) => (
+            {sourceRows.map((r) => (
               <tr key={r.source}>
                 <td>{r.source}</td>
                 <td>{r.requests}</td>
-                <td>{formatUsd(Number(r.revenue))}</td>
-                <td>{formatUsd(Number(r.upstream))}</td>
-                <td>{formatUsd(Number(r.revenue) - Number(r.upstream))}</td>
+                <td>{formatUsd(r.revenue)}</td>
+                <td>{formatUsd(r.upstream)}</td>
+                <td>{formatUsd(r.revenue - r.upstream)}</td>
               </tr>
             ))}
-            {!bySource.length && <tr><td colSpan={5} className="muted">No traffic yet today.</td></tr>}
+            {!sourceRows.length && <tr><td colSpan={5} className="muted">No traffic yet today.</td></tr>}
           </tbody>
         </table>
       </div>

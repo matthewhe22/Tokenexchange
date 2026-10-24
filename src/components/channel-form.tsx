@@ -16,6 +16,10 @@ export interface ChannelFormValue {
   priority: number;
   weight: number;
   costMultiplier: number;
+  fixedCostHourly: number | null;
+  capacityTpm: number | null;
+  /** YYYY-MM-DD in the app time zone */
+  commitmentEndsAt: string;
   enabled: boolean;
   /** Which credential fields already hold a value (values themselves are never sent to the browser). */
   storedCredentials: string[];
@@ -118,6 +122,24 @@ export function ChannelForm({ value, action }: { value: ChannelFormValue; action
         <div>
           <label>Cost multiplier (our cost ÷ list price)</label>
           <input name="costMultiplier" type="number" step="0.001" min={0} defaultValue={value.costMultiplier} />
+        </div>
+        <div className="wide muted" style={{ marginTop: 8 }}>
+          <strong>Committed capacity</strong> (Azure PTU, Bedrock / Vertex provisioned throughput, Fireworks reserved). Leave blank
+          for pay-as-you-go. With an hourly cost, requests here have no per-token cost and the commitment is tracked on the
+          Capacity page. Give it a higher priority than a pay-as-you-go channel for the same model: traffic above the
+          tokens-per-minute capacity, or a 429 from a full deployment, spills over without counting as a failure.
+        </div>
+        <div>
+          <label>Fixed cost, USD per hour</label>
+          <input name="fixedCostHourly" type="number" step="any" min={0} defaultValue={value.fixedCostHourly ?? ""} placeholder="e.g. 30.27" />
+        </div>
+        <div>
+          <label>Capacity, tokens per minute</label>
+          <input name="capacityTpm" type="number" min={1} defaultValue={value.capacityTpm ?? ""} placeholder="e.g. 250000" />
+        </div>
+        <div>
+          <label>Commitment ends (Melbourne date)</label>
+          <input name="commitmentEndsAt" type="date" defaultValue={value.commitmentEndsAt} />
         </div>
         <div className="row" style={{ alignSelf: "end" }}>
           <input id="enabled" name="enabled" type="checkbox" defaultChecked={value.enabled} />

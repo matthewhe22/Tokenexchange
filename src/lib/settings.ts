@@ -12,9 +12,13 @@ export interface RoutingSettings {
   maxAttempts: number;
   /** Disable a channel after this many consecutive failures (0 = never). */
   autoDisableAfter: number;
+  /** Keep each API key + model on the same channel so upstream prompt caches keep hitting. */
+  affinity: boolean;
+  /** Serve OpenAI Chat Completions requests from Anthropic / Gemini channels by translating them. */
+  allowConversion: boolean;
 }
 
-export const DEFAULT_ROUTING: RoutingSettings = { enabledSources: [...SOURCES], modelSources: {}, maxAttempts: 3, autoDisableAfter: 0 };
+export const DEFAULT_ROUTING: RoutingSettings = { enabledSources: [...SOURCES], modelSources: {}, maxAttempts: 3, autoDisableAfter: 0, affinity: true, allowConversion: true };
 
 export async function getRoutingSettings(): Promise<RoutingSettings> {
   return cached("settings:routing", async () => {

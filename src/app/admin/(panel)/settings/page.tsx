@@ -37,6 +37,18 @@ export default async function SettingsPage() {
           <label>Max channels to try per request</label>
           <input name="maxAttempts" type="number" min={1} max={10} defaultValue={routing.maxAttempts} />
         </div>
+        <div className="row">
+          <input id="affinity" type="checkbox" name="affinity" defaultChecked={routing.affinity} />
+          <label htmlFor="affinity" style={{ margin: 0, color: "inherit" }}>
+            <strong>Channel affinity</strong> <span className="muted">— keep each API key + model on the same channel (better prompt-cache hit rates)</span>
+          </label>
+        </div>
+        <div className="row">
+          <input id="allowConversion" type="checkbox" name="allowConversion" defaultChecked={routing.allowConversion} />
+          <label htmlFor="allowConversion" style={{ margin: 0, color: "inherit" }}>
+            <strong>Protocol conversion</strong> <span className="muted">— serve /v1/chat/completions for Claude and Gemini models through Anthropic / Gemini channels</span>
+          </label>
+        </div>
         <div style={{ maxWidth: 360 }}>
           <label>Auto-disable a channel after this many consecutive failures (0 = never)</label>
           <input name="autoDisableAfter" type="number" min={0} defaultValue={routing.autoDisableAfter} />

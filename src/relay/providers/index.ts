@@ -1,9 +1,9 @@
 import { AwsClient } from "aws4fetch";
 import type { ChannelRuntime, Json, Protocol, RelayRequest, UpstreamCall } from "../types";
 import { getAccessToken, parseServiceAccount } from "./google-auth";
-import { supports } from "./info";
+import { supportsModel } from "./info";
 
-export { PROVIDER_INFO, supports } from "./info";
+export { PROVIDER_INFO, supports, supportsModel } from "./info";
 
 const trim = (url: string) => url.replace(/\/+$/, "");
 
@@ -128,7 +128,9 @@ function buildGemini(req: RelayRequest, ch: ChannelRuntime): UpstreamCall {
 }
 
 export async function buildUpstreamCall(req: RelayRequest, ch: ChannelRuntime): Promise<UpstreamCall> {
-  if (!supports(ch.provider, req.protocol)) throw new Error(`${ch.provider} does not serve ${req.protocol}`);
+  if (!supportsModel(ch.provider, req.protocol, ch.upstreamModel)) {
+    throw new Error(`${ch.provider} does not serve ${ch.upstreamModel} over ${req.protocol}`);
+  }
   switch (ch.provider) {
     case "openai":
     case "azure_openai":

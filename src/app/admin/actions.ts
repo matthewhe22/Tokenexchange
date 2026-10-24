@@ -154,6 +154,8 @@ export async function saveRouting(form: FormData) {
     modelSources,
     maxAttempts: Math.min(10, Math.max(1, num(form, "maxAttempts", 3))),
     autoDisableAfter: Math.max(0, Math.floor(num(form, "autoDisableAfter", 0))),
+    affinity: form.get("affinity") === "on",
+    allowConversion: form.get("allowConversion") === "on",
   });
   revalidatePath("/admin/settings");
 }

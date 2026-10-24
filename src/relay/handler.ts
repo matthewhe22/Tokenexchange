@@ -6,6 +6,7 @@ import { applyOutputCap, planCost, releaseStaleReservations, reserve } from "@/l
 import { getLimitSettings, getRoutingSettings } from "@/lib/settings";
 import { authenticateApiKey, extractApiKey, type ApiKeyRow, type UserRow } from "./auth";
 import { bedrockToSSE } from "./bedrock-stream";
+import { conversionTargets, ConversionError, converterFor } from "./convert";
 import { relayError } from "./errors";
 import { buildUpstreamCall } from "./providers";
 import { orderChannels } from "./router";
@@ -43,6 +44,14 @@ interface Ctx {
   started: number;
   reservationId: number | null;
   settled: boolean;
+  /** Set when the request was translated for an upstream speaking another protocol. */
+  via?: Protocol;
+}
+
+interface Candidate {
+  ch: LoadedChannel;
+  /** Protocol spoken to this channel; differs from the client's when converting. */
+  target: Protocol;
 }
 
 async function settleOnce(ctx: Ctx, ch: LoadedChannel | null, status: number, usage: Usage | null, error?: string) {
@@ -52,7 +61,7 @@ async function settleOnce(ctx: Ctx, ch: LoadedChannel | null, status: number, us
     userId: ctx.user.id,
     apiKeyId: ctx.apiKey.id,
     channelId: ch?.id ?? null,
-    endpoint: ctx.endpoint,
+    endpoint: ctx.via ? `${ctx.endpoint} → ${ctx.via}` : ctx.endpoint,
     model: ctx.req.model,
     upstreamModel: ch ? (ch.modelMapping[ctx.req.model] ?? ctx.req.model) : null,
     stream: ctx.req.stream,
@@ -130,7 +139,17 @@ export async function relay(req: Request, protocol: Protocol, opts: RelayOptions
   }
 
   const [channels, routing] = await Promise.all([getActiveChannels(), getRoutingSettings()]);
-  const candidates = orderChannels(channels, model, protocol, routing).slice(0, Math.max(1, routing.maxAttempts));
+  const affinityKey = routing.affinity ? `${apiKey.id}:${model}` : undefined;
+  const candidates: Candidate[] = orderChannels(channels, model, protocol, routing, Math.random, affinityKey).map((ch) => ({ ch, target: protocol }));
+  if (routing.allowConversion) {
+    // Channels that speak another protocol come after native ones (e.g. Claude via /v1/chat/completions).
+    for (const target of conversionTargets(protocol)) {
+      for (const ch of orderChannels(channels, model, target, routing, Math.random, affinityKey)) {
+        if (!candidates.some((c) => c.ch.id === ch.id)) candidates.push({ ch, target });
+      }
+    }
+  }
+  candidates.splice(Math.max(1, routing.maxAttempts));
   if (!candidates.length) return relayError(protocol, 503, `no upstream channel is available for '${model}'`);
 
   // Hold funds for the worst case before calling upstream, and cap the output so the upstream can
@@ -162,14 +181,25 @@ export async function relay(req: Request, protocol: Protocol, opts: RelayOptions
   }
 }
 
-async function forward(ctx: Ctx, candidates: LoadedChannel[], autoDisableAfter: number): Promise<Response> {
+async function forward(ctx: Ctx, candidates: Candidate[], autoDisableAfter: number): Promise<Response> {
   const { protocol, model, stream } = ctx.req;
-  const rreq = ctx.req;
   let lastError = { status: 502, message: "upstream request failed" };
   let lastChannel: LoadedChannel | null = null;
 
-  for (const ch of candidates) {
+  for (const { ch, target } of candidates) {
     lastChannel = ch;
+    const conv = target === protocol ? null : converterFor(protocol, target);
+    let rreq = ctx.req;
+    if (conv) {
+      try {
+        rreq = { ...ctx.req, protocol: target, body: conv.request(ctx.req.body) };
+      } catch (err) {
+        if (!(err instanceof ConversionError)) throw err;
+        ctx.via = target;
+        await settle(ctx, ch, 400, null, err.message);
+        return relayError(protocol, 400, err.message, "invalid_request_error");
+      }
+    }
     const runtime = { ...ch, upstreamModel: ch.modelMapping[model] ?? model };
     let res: Response;
     let streamFormat: "sse" | "aws-eventstream";
@@ -192,32 +222,42 @@ async function forward(ctx: Ctx, candidates: LoadedChannel[], autoDisableAfter: 
         lastError = { status: res.status, message: detail };
         continue;
       }
+      ctx.via = conv ? target : undefined;
       waitUntil(settle(ctx, ch, res.status, null, detail));
       if (PASSTHROUGH.has(res.status)) {
+        // A translated request gets the upstream's message in the client's own error format.
+        if (conv) return relayError(protocol, res.status, conv.errorMessage(text), "invalid_request_error");
         return new Response(text, { status: res.status, headers: { "content-type": res.headers.get("content-type") ?? "application/json" } });
       }
       return relayError(protocol, res.status, "upstream rejected the request");
     }
 
     if (ch.failCount > 0) waitUntil(markChannelHealthy(ch.id));
+    ctx.via = conv ? target : undefined;
 
     if (!stream || !res.body) {
       const text = await res.text();
-      let usage: Usage | null = null;
+      let json: Json = null;
       try {
-        usage = usageFromBody(protocol, JSON.parse(text));
+        json = JSON.parse(text);
       } catch {
         // non-JSON success body: relay it, but there is nothing to bill
       }
+      const usage = json ? usageFromBody(target, json) : null;
       // Never fail a successful upstream call because bookkeeping failed; settle() logs and retries.
       await settle(ctx, ch, res.status, usage, usage ? undefined : "no usage in upstream response");
+      if (conv) {
+        if (!json) throw new Error("upstream returned a non-JSON body for a translated request");
+        return Response.json(conv.response(json, model), { status: res.status });
+      }
       return new Response(text, { status: res.status, headers: { "content-type": res.headers.get("content-type") ?? "application/json" } });
     }
 
     const sse = streamFormat === "aws-eventstream" ? res.body.pipeThrough(bedrockToSSE()) : res.body;
-    const tracker = new StreamUsageTracker(protocol);
+    // Usage is read from the upstream's own events, before any translation.
+    const tracker = new StreamUsageTracker(target);
     const parser = new SSEParser((event, data) => tracker.onEvent(event, data));
-    const out = tapStream(
+    const tapped = tapStream(
       sse,
       (chunk) => parser.push(chunk),
       async (error) => {
@@ -227,6 +267,7 @@ async function forward(ctx: Ctx, candidates: LoadedChannel[], autoDisableAfter: 
         await settle(ctx, ch, 200, usage, message);
       },
     );
+    const out = conv ? tapped.pipeThrough(conv.stream(model, ctx.req.body?.stream_options?.include_usage === true)) : tapped;
     return new Response(out, { status: 200, headers: SSE_HEADERS });
   }
 

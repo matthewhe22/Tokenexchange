@@ -184,6 +184,48 @@ await step("Per-model source restriction sends Gemini to Vertex", async () => {
   assert.equal((await lastLog()).channelId, vertex.id);
 });
 
+await step("OpenAI Chat request for a Claude model is translated to Anthropic (via Bedrock) and back", async () => {
+  const res = await post("/v1/chat/completions", { model: "claude-test", messages: [{ role: "system", content: "s" }, { role: "user", content: "hi" }] });
+  assert.equal(res.status, 200, await res.clone().text());
+  const body = await res.json();
+  assert.equal(body.object, "chat.completion");
+  assert.equal(body.choices[0].message.content, "pong");
+  assert.equal(body.usage.prompt_tokens, 11);
+  const sent = mock.received.filter((r) => r.path.startsWith("/bedrock/")).at(-1)!;
+  assert.equal(sent.body.system, "s");
+  assert.ok(sent.body.max_tokens > 0);
+  await logsSettled(++logs);
+  assert.match((await lastLog()).endpoint, /→ anthropic-messages/);
+});
+
+await step("Streaming translation emits OpenAI chunks, a usage chunk and [DONE]", async () => {
+  const text = await (await post("/v1/chat/completions", { model: "claude-test", stream: true, stream_options: { include_usage: true }, messages: [{ role: "user", content: "hi" }] })).text();
+  const events = text.split("\n\n").filter(Boolean).map((l) => l.slice(6));
+  assert.equal(events.at(-1), "[DONE]");
+  const chunks = events.slice(0, -1).map((e) => JSON.parse(e));
+  assert.equal(chunks.map((c) => c.choices[0]?.delta?.content ?? "").join(""), "pong");
+  assert.equal(chunks.at(-1).usage.completion_tokens, 7);
+  await logsSettled(++logs);
+  assert.equal((await lastLog()).outputTokens, 7);
+});
+
+await step("OpenAI Chat request for a Gemini model is translated (via Vertex)", async () => {
+  const res = await post("/v1/chat/completions", { model: "gemini-test", messages: [{ role: "user", content: "hi" }] });
+  assert.equal(res.status, 200, await res.clone().text());
+  assert.equal((await res.json()).choices[0].message.content, "pong");
+  await logsSettled(++logs);
+});
+
+await step("Untranslatable input is a clean OpenAI-style 400", async () => {
+  const res = await post("/v1/chat/completions", {
+    model: "gemini-test",
+    messages: [{ role: "user", content: [{ type: "image_url", image_url: { url: "https://example.com/a.png" } }] }],
+  });
+  assert.equal(res.status, 400);
+  assert.match((await res.json()).error.message, /base64/);
+  await logsSettled(++logs);
+});
+
 await step("Errors: bad key, unpriced model, model with no channel, empty balance", async () => {
   assert.equal((await post("/v1/chat/completions", { model: "gpt-test" }, { authorization: "Bearer nope" })).status, 401);
   assert.equal((await post("/v1/chat/completions", { model: "unknown", messages: [] })).status, 404);

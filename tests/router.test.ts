@@ -37,3 +37,37 @@ describe("orderChannels", () => {
     expect(first(0.5)).toBe(2);
   });
 });
+
+describe("channel affinity", () => {
+  const chans = [ch(1, { weight: 1 }), ch(2, { weight: 1 }), ch(3, { weight: 2 })];
+  it("is deterministic per key", () => {
+    const a = orderChannels(chans, "gpt-4o", "openai-chat", DEFAULT_ROUTING, Math.random, "key:7:gpt-4o").map((c) => c.id);
+    for (let i = 0; i < 5; i++) {
+      expect(orderChannels(chans, "gpt-4o", "openai-chat", DEFAULT_ROUTING, Math.random, "key:7:gpt-4o").map((c) => c.id)).toEqual(a);
+    }
+  });
+  it("still spreads keys roughly by weight", () => {
+    const firsts = new Map<number, number>();
+    for (let k = 0; k < 4000; k++) {
+      const id = orderChannels(chans, "gpt-4o", "openai-chat", DEFAULT_ROUTING, Math.random, `key:${k}`)[0].id;
+      firsts.set(id, (firsts.get(id) ?? 0) + 1);
+    }
+    expect(firsts.get(3)! / 4000).toBeGreaterThan(0.44);
+    expect(firsts.get(3)! / 4000).toBeLessThan(0.56);
+    expect(firsts.get(1)! / 4000).toBeGreaterThan(0.2);
+  });
+  it("respects priority tiers", () => {
+    const tiered = [ch(1, { priority: 0 }), ch(2, { priority: 5 })];
+    expect(orderChannels(tiered, "gpt-4o", "openai-chat", DEFAULT_ROUTING, Math.random, "anything")[0].id).toBe(2);
+  });
+});
+
+describe("multi-protocol providers", () => {
+  it("routes Vertex by model family", () => {
+    const vertex = [ch(1, { provider: "vertex", source: "cloud", models: ["claude-x", "gemini-x"] })];
+    expect(orderChannels(vertex, "claude-x", "anthropic-messages", DEFAULT_ROUTING)).toHaveLength(1);
+    expect(orderChannels(vertex, "claude-x", "gemini", DEFAULT_ROUTING)).toHaveLength(0);
+    expect(orderChannels(vertex, "gemini-x", "gemini", DEFAULT_ROUTING)).toHaveLength(1);
+    expect(orderChannels(vertex, "gemini-x", "anthropic-messages", DEFAULT_ROUTING)).toHaveLength(0);
+  });
+});

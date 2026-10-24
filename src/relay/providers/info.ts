@@ -78,3 +78,13 @@ export const PROVIDER_INFO: Record<
 export function supports(provider: Provider, protocol: Protocol): boolean {
   return PROVIDER_INFO[provider].protocols.includes(protocol);
 }
+
+/**
+ * Whether a channel can serve `upstreamModel` over `protocol`. Vertex hosts Claude (Anthropic
+ * protocol) and Gemini (Gemini protocol) side by side, so for it the model decides the protocol.
+ */
+export function supportsModel(provider: Provider, protocol: Protocol, upstreamModel: string): boolean {
+  if (!supports(provider, protocol)) return false;
+  if (provider === "vertex") return (protocol === "anthropic-messages") === /claude/i.test(upstreamModel);
+  return true;
+}

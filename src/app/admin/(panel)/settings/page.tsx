@@ -1,6 +1,6 @@
 import { SOURCES } from "@/db/enums";
-import { getRoutingSettings } from "@/lib/settings";
-import { saveRouting } from "../../actions";
+import { getLimitSettings, getRoutingSettings } from "@/lib/settings";
+import { saveLimits, saveRouting } from "../../actions";
 
 const SOURCE_HELP: Record<string, string> = {
   official: "Direct accounts with OpenAI, Anthropic, Google",
@@ -9,7 +9,7 @@ const SOURCE_HELP: Record<string, string> = {
 };
 
 export default async function SettingsPage() {
-  const routing = await getRoutingSettings();
+  const [routing, limits] = await Promise.all([getRoutingSettings(), getLimitSettings()]);
   return (
     <>
       <h1>Routing</h1>
@@ -43,7 +43,22 @@ export default async function SettingsPage() {
         </div>
         <div><button>Save routing</button></div>
       </form>
-      <p className="muted">Changes reach every serverless instance within about 10 seconds.</p>
+      <h1 style={{ marginTop: 32 }}>Rate limits</h1>
+      <form action={saveLimits} className="card form-grid">
+        <div>
+          <label>Requests / minute per API key (0 = unlimited). A key&apos;s own limit overrides this.</label>
+          <input name="defaultKeyRpm" type="number" min={0} defaultValue={limits.defaultKeyRpm} />
+        </div>
+        <div>
+          <label>Requests / minute per user across all keys (0 = unlimited)</label>
+          <input name="userRpm" type="number" min={0} defaultValue={limits.userRpm} />
+        </div>
+        <div><button>Save limits</button></div>
+      </form>
+      <p className="muted">
+        Changes reach every serverless instance within about 10 seconds. Counters use Upstash Redis when
+        UPSTASH_REDIS_REST_URL is set, otherwise the database.
+      </p>
     </>
   );
 }

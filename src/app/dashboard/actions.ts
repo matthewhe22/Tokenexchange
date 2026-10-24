@@ -7,7 +7,7 @@ import { redirect } from "next/navigation";
 import { getDb, schema } from "@/db";
 import { generateApiKey, sha256 } from "@/lib/crypto";
 import { usdToMicros } from "@/lib/money";
-import { requireUser } from "@/lib/session";
+import { bumpSessionVersion, createSession, requireUser } from "@/lib/session";
 import { createTopupCheckout, stripeEnabled } from "@/lib/stripe";
 
 const MAX_KEYS = 20;
@@ -73,5 +73,13 @@ export async function changePassword(_prev: unknown, form: FormData): Promise<{ 
   if (!user.passwordHash || !(await bcrypt.compare(current, user.passwordHash))) return { error: "Current password is incorrect" };
   if (next.length < 8) return { error: "New password must be at least 8 characters" };
   await getDb().update(schema.users).set({ passwordHash: await bcrypt.hash(next, 10) }).where(eq(schema.users.id, user.id));
-  return { message: "Password updated." };
+  // Sign out every other device, then re-issue this browser's session at the new version.
+  await createSession(user.id, await bumpSessionVersion(user.id));
+  return { message: "Password updated. Other devices have been signed out." };
+}
+
+export async function signOutEverywhere() {
+  const user = await requireUser();
+  await bumpSessionVersion(user.id);
+  redirect("/login");
 }

@@ -69,3 +69,20 @@ describe("formatting", async () => {
     expect(perMillion(null)).toBe("—");
   });
 });
+
+describe("estimateCost", async () => {
+  const { estimateCost, DEFAULT_OUTPUT_ESTIMATE, MAX_OUTPUT_ESTIMATE } = await import("@/lib/reservations");
+  const price = { model: "m", inputPrice: 2, outputPrice: 10, cacheReadPrice: null, cacheWritePrice: null, markup: 1.5, enabled: true, updatedAt: new Date() };
+  it("uses the request's own output limit per protocol", () => {
+    expect(estimateCost("anthropic-messages", { max_tokens: 100 }, 400, price)).toBe(Math.ceil((100 * 2 + 100 * 10) * 1.5));
+    expect(estimateCost("openai-chat", { max_completion_tokens: 50 }, 0, price)).toBe(Math.ceil(50 * 10 * 1.5));
+    expect(estimateCost("gemini", { generationConfig: { maxOutputTokens: 10 } }, 0, price)).toBe(150);
+  });
+  it("falls back to a default and caps huge limits", () => {
+    expect(estimateCost("openai-chat", {}, 0, price)).toBe(Math.ceil(DEFAULT_OUTPUT_ESTIMATE * 10 * 1.5));
+    expect(estimateCost("openai-chat", { max_tokens: 10_000_000 }, 0, price)).toBe(Math.ceil(MAX_OUTPUT_ESTIMATE * 10 * 1.5));
+  });
+  it("charges no output for embeddings", () => {
+    expect(estimateCost("openai-embeddings", { max_tokens: 99 }, 40, price)).toBe(Math.ceil(10 * 2 * 1.5));
+  });
+});

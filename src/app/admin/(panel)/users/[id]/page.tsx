@@ -45,7 +45,7 @@ export default async function UserPage({ params }: { params: Promise<{ id: strin
       <h2>API keys</h2>
       <div className="card scroll">
         <table>
-          <thead><tr><th>Name</th><th>Key</th><th>Used / limit</th><th>Models</th><th>Last used</th><th>Status</th><th></th></tr></thead>
+          <thead><tr><th>Name</th><th>Key</th><th>Used / limit</th><th>Models</th><th>RPM</th><th>Last used</th><th>Status</th><th></th></tr></thead>
           <tbody>
             {keys.map((k) => (
               <tr key={k.id}>
@@ -53,6 +53,7 @@ export default async function UserPage({ params }: { params: Promise<{ id: strin
                 <td className="mono">{k.keyPrefix}…</td>
                 <td>{formatUsd(k.used)} / {k.quotaLimit != null ? formatUsd(k.quotaLimit) : "∞"}</td>
                 <td className="mono">{k.allowedModels?.join(", ") ?? "all"}</td>
+                <td>{k.rpmLimit ?? "default"}</td>
                 <td>{k.lastUsedAt?.toISOString().replace("T", " ").slice(0, 16) ?? "—"}</td>
                 <td>{k.enabled ? <span className="badge ok">enabled</span> : <span className="badge off">disabled</span>}</td>
                 <td className="row">

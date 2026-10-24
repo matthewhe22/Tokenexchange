@@ -12,7 +12,7 @@ import { invalidateChannels } from "@/lib/channels";
 import { decrypt, encrypt, generateApiKey, sha256 } from "@/lib/crypto";
 import { usdToMicros } from "@/lib/money";
 import { requireAdmin } from "@/lib/session";
-import { saveRoutingSettings } from "@/lib/settings";
+import { saveLimitSettings, saveRoutingSettings } from "@/lib/settings";
 import { PROVIDER_INFO } from "@/relay/providers/info";
 
 const str = (f: FormData, k: string) => String(f.get(k) ?? "").trim();
@@ -157,6 +157,15 @@ export async function saveRouting(form: FormData) {
   revalidatePath("/admin/settings");
 }
 
+export async function saveLimits(form: FormData) {
+  await requireAdmin();
+  await saveLimitSettings({
+    defaultKeyRpm: Math.max(0, Math.floor(num(form, "defaultKeyRpm", 0))),
+    userRpm: Math.max(0, Math.floor(num(form, "userRpm", 0))),
+  });
+  revalidatePath("/admin/settings");
+}
+
 // ---------- users & keys ----------
 
 export async function createUser(form: FormData) {
@@ -209,6 +218,7 @@ export async function createKey(_prev: unknown, form: FormData): Promise<{ key?:
   const quota = str(form, "quota");
   const models = list(str(form, "allowedModels"));
   const expires = str(form, "expiresAt");
+  const rpm = str(form, "rpmLimit");
   await getDb()
     .insert(schema.apiKeys)
     .values({
@@ -219,6 +229,7 @@ export async function createKey(_prev: unknown, form: FormData): Promise<{ key?:
       quotaLimit: quota ? usdToMicros(Number(quota)) : null,
       allowedModels: models.length ? models : null,
       expiresAt: expires ? new Date(expires) : null,
+      rpmLimit: rpm ? Math.max(0, Math.floor(Number(rpm))) : null,
     });
   revalidatePath(`/admin/users/${userId}`);
   return { key };

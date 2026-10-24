@@ -24,6 +24,7 @@ jobs:
       STRIPE_SECRET_KEY: sk_test_e2e
       STRIPE_WEBHOOK_SECRET: whsec_e2e
       STRIPE_API_BASE: http://localhost:4010
+      CRON_SECRET: ci-cron-secret
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

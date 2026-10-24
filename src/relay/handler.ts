@@ -1,7 +1,9 @@
 import { waitUntil } from "@vercel/functions";
 import { chargeFor, getPrices, recordUsage, type ModelPrice } from "@/lib/billing";
 import { getActiveChannels, markChannelFailure, markChannelHealthy, type LoadedChannel } from "@/lib/channels";
-import { getRoutingSettings } from "@/lib/settings";
+import { hit } from "@/lib/ratelimit";
+import { estimateCost, releaseStaleReservations, reserve } from "@/lib/reservations";
+import { getLimitSettings, getRoutingSettings } from "@/lib/settings";
 import { authenticateApiKey, extractApiKey, type ApiKeyRow, type UserRow } from "./auth";
 import { bedrockToSSE } from "./bedrock-stream";
 import { relayError } from "./errors";
@@ -39,6 +41,7 @@ interface Ctx {
   req: RelayRequest;
   endpoint: string;
   started: number;
+  reservationId: number | null;
 }
 
 async function settle(ctx: Ctx, ch: LoadedChannel | null, status: number, usage: Usage | null, error?: string) {
@@ -58,6 +61,7 @@ async function settle(ctx: Ctx, ch: LoadedChannel | null, status: number, usage:
     upstreamCost,
     latencyMs: Date.now() - ctx.started,
     error,
+    reservationId: ctx.reservationId,
   });
 }
 
@@ -70,8 +74,11 @@ export async function relay(req: Request, protocol: Protocol, opts: RelayOptions
   const { user, apiKey } = auth;
 
   let body: Json;
+  let rawBytes: number;
   try {
-    body = await req.json();
+    const raw = await req.text();
+    rawBytes = Buffer.byteLength(raw);
+    body = JSON.parse(raw);
   } catch {
     return relayError(protocol, 400, "request body must be valid JSON");
   }
@@ -91,12 +98,33 @@ export async function relay(req: Request, protocol: Protocol, opts: RelayOptions
     return relayError(protocol, 402, "this API key has reached its spending limit", "insufficient_quota");
   }
 
+  const limits = await getLimitSettings();
+  const [keyLimit, userLimit] = await Promise.all([
+    hit(`key:${apiKey.id}`, apiKey.rpmLimit ?? limits.defaultKeyRpm),
+    hit(`user:${user.id}`, limits.userRpm),
+  ]);
+  for (const l of [keyLimit, userLimit]) {
+    if (!l.ok) {
+      return relayError(protocol, 429, "rate limit exceeded, please slow down", "rate_limit_exceeded", { "retry-after": String(l.retryAfter) });
+    }
+  }
+
   const [channels, routing] = await Promise.all([getActiveChannels(), getRoutingSettings()]);
   const candidates = orderChannels(channels, model, protocol, routing).slice(0, Math.max(1, routing.maxAttempts));
   if (!candidates.length) return relayError(protocol, 503, `no upstream channel is available for '${model}'`);
 
+  // Hold funds for the worst case before calling upstream; settle() returns the difference.
+  const held = await reserve(user.id, apiKey.id, estimateCost(protocol, body, rawBytes, price));
+  if (!held.ok) {
+    return held.reason === "key_quota"
+      ? relayError(protocol, 402, "this API key has reached its spending limit", "insufficient_quota")
+      : relayError(protocol, 402, "insufficient balance, please top up", "insufficient_quota");
+  }
+  // Cheap sweep for funds held by functions that were killed mid-request; cron does the same daily.
+  if (Math.random() < 0.01) waitUntil(releaseStaleReservations().catch(() => 0));
+
   const rreq: RelayRequest = { protocol, model, stream, body, headers: req.headers };
-  const ctx: Ctx = { user, apiKey, price, req: rreq, endpoint: opts.endpoint, started };
+  const ctx: Ctx = { user, apiKey, price, req: rreq, endpoint: opts.endpoint, started, reservationId: held.id };
   let lastError = { status: 502, message: "upstream request failed" };
   let lastChannel: LoadedChannel | null = null;
 

@@ -41,12 +41,23 @@ export interface UsageEntry {
   upstreamCost: number;
   latencyMs: number;
   error?: string | null;
+  /** Funds held for this request by `reserve()`, released here. */
+  reservationId?: number | null;
 }
 
-/** Writes the usage log and debits the user and the key in one transaction. */
+/**
+ * Writes the usage log and settles the request in one transaction: the reservation (if it is
+ * still held) is returned and the actual cost is charged to the user and the key.
+ */
 export async function recordUsage(e: UsageEntry): Promise<void> {
   const u = e.usage ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   await getDb().transaction(async (tx) => {
+    let held = 0;
+    if (e.reservationId != null) {
+      // If the stale-reservation sweeper already returned these funds, nothing is held any more.
+      const [r] = await tx.delete(schema.reservations).where(eq(schema.reservations.id, e.reservationId)).returning();
+      held = r?.amount ?? 0;
+    }
     await tx.insert(schema.usageLogs).values({
       userId: e.userId,
       apiKeyId: e.apiKeyId,
@@ -65,15 +76,16 @@ export async function recordUsage(e: UsageEntry): Promise<void> {
       latencyMs: e.latencyMs,
       error: e.error?.slice(0, 2000) ?? null,
     });
-    if (e.cost > 0) {
+    const delta = e.cost - held;
+    if (delta !== 0) {
       await tx
         .update(schema.users)
-        .set({ balance: sql`${schema.users.balance} - ${e.cost}` })
+        .set({ balance: sql`${schema.users.balance} - ${delta}` })
         .where(eq(schema.users.id, e.userId));
     }
     await tx
       .update(schema.apiKeys)
-      .set({ used: sql`${schema.apiKeys.used} + ${e.cost}`, lastUsedAt: new Date() })
+      .set({ used: sql`${schema.apiKeys.used} + ${delta}`, lastUsedAt: new Date() })
       .where(eq(schema.apiKeys.id, e.apiKeyId));
   });
 }

@@ -25,6 +25,8 @@ export const users = pgTable("users", {
   disabled: boolean("disabled").notNull().default(false),
   stripeCustomerId: text("stripe_customer_id"),
   emailVerifiedAt: timestamp("email_verified_at", { withTimezone: true }),
+  // Bumped on password change/reset; sessions signed with an older version are rejected.
+  sessionVersion: integer("session_version").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -43,6 +45,8 @@ export const apiKeys = pgTable(
     // null = no per-key limit (user balance still applies)
     quotaLimit: bigint("quota_limit", { mode: "number" }),
     used: bigint("used", { mode: "number" }).notNull().default(0),
+    // requests per minute; null = use the site default
+    rpmLimit: integer("rpm_limit"),
     enabled: boolean("enabled").notNull().default(true),
     expiresAt: timestamp("expires_at", { withTimezone: true }),
     lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
@@ -152,3 +156,26 @@ export const authTokens = pgTable(
   },
   (t) => [index("auth_tokens_user_idx").on(t.userId)],
 );
+
+// Funds held while a request is in flight, so concurrent requests cannot overdraw a balance.
+// Settling a request deletes its row; rows left behind by killed functions are released by cron.
+export const reservations = pgTable(
+  "reservations",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    apiKeyId: integer("api_key_id"),
+    amount: bigint("amount", { mode: "number" }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("reservations_created_idx").on(t.createdAt)],
+);
+
+// Fixed-window counters for rate limiting when Upstash Redis is not configured.
+export const rateLimits = pgTable("rate_limits", {
+  bucket: text("bucket").primaryKey(),
+  windowStart: bigint("window_start", { mode: "number" }).notNull(),
+  count: integer("count").notNull(),
+});

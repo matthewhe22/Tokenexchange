@@ -7,7 +7,7 @@ import { redirect } from "next/navigation";
 import { getDb, schema } from "@/db";
 import { consumeAuthToken, issueAuthToken } from "@/lib/auth-tokens";
 import { emailEnabled, sendEmail } from "@/lib/email";
-import { createSession, destroySession, requireUser } from "@/lib/session";
+import { bumpSessionVersion, createSession, destroySession, requireUser } from "@/lib/session";
 import { verifyTurnstile } from "@/lib/turnstile";
 import { appUrl } from "@/lib/url";
 
@@ -45,7 +45,7 @@ export async function login(_prev: FormState | undefined, form: FormData): Promi
   if (!user || user.disabled || !user.passwordHash || !(await bcrypt.compare(password, user.passwordHash))) {
     return { error: "Invalid email or password", email };
   }
-  await createSession(user.id);
+  await createSession(user.id, user.sessionVersion);
   redirect(safeNext(str(form, "next")) ?? (user.role === "admin" ? "/admin" : "/dashboard"));
 }
 
@@ -67,7 +67,7 @@ export async function signup(_prev: FormState | undefined, form: FormData): Prom
     .values({ email, passwordHash: await bcrypt.hash(password, 10), emailVerifiedAt: emailEnabled() ? null : new Date() })
     .returning();
   if (emailEnabled()) await sendVerification(user.id, email);
-  await createSession(user.id);
+  await createSession(user.id, user.sessionVersion);
   redirect("/dashboard");
 }
 
@@ -113,5 +113,6 @@ export async function resetPassword(_prev: FormState | undefined, form: FormData
     // The reset link proves control of the inbox, so it also verifies the address.
     .set({ passwordHash: await bcrypt.hash(password, 10), emailVerifiedAt: user?.emailVerifiedAt ?? new Date() })
     .where(eq(schema.users.id, userId));
+  await bumpSessionVersion(userId);
   redirect("/login?reset=1");
 }

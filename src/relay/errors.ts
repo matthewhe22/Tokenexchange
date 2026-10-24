@@ -21,7 +21,7 @@ const GEMINI_STATUS: Record<number, string> = {
 };
 
 /** An error in the shape the caller's SDK expects for the protocol it is speaking. */
-export function relayError(protocol: Protocol, status: number, message: string, code?: string): Response {
+export function relayError(protocol: Protocol, status: number, message: string, code?: string, headers?: HeadersInit): Response {
   let body: unknown;
   if (protocol === "anthropic-messages") {
     body = { type: "error", error: { type: ANTHROPIC_TYPES[status] ?? "api_error", message } };
@@ -30,5 +30,5 @@ export function relayError(protocol: Protocol, status: number, message: string, 
   } else {
     body = { error: { message, type: code ?? "tokenexchange_error", code: code ?? null } };
   }
-  return Response.json(body, { status });
+  return Response.json(body, { status, headers });
 }

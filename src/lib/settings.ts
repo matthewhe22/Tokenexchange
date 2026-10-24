@@ -30,3 +30,27 @@ export async function saveRoutingSettings(value: RoutingSettings): Promise<void>
     .onConflictDoUpdate({ target: schema.settings.key, set: { value } });
   invalidate("settings:");
 }
+
+export interface LimitSettings {
+  /** Requests per minute per API key unless the key sets its own limit (0 = unlimited). */
+  defaultKeyRpm: number;
+  /** Requests per minute across all of a user's keys (0 = unlimited). */
+  userRpm: number;
+}
+
+export const DEFAULT_LIMITS: LimitSettings = { defaultKeyRpm: 300, userRpm: 0 };
+
+export async function getLimitSettings(): Promise<LimitSettings> {
+  return cached("settings:limits", async () => {
+    const [row] = await getDb().select().from(schema.settings).where(eq(schema.settings.key, "limits"));
+    return { ...DEFAULT_LIMITS, ...((row?.value as Partial<LimitSettings>) ?? {}) };
+  });
+}
+
+export async function saveLimitSettings(value: LimitSettings): Promise<void> {
+  await getDb()
+    .insert(schema.settings)
+    .values({ key: "limits", value })
+    .onConflictDoUpdate({ target: schema.settings.key, set: { value } });
+  invalidate("settings:");
+}

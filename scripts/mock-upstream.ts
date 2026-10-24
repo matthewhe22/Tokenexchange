@@ -54,6 +54,11 @@ export function startMockUpstream(port: number): Promise<{ received: Received[];
       return res.end("<h1>Mock Stripe Checkout</h1>");
     }
 
+    if (path === "/slow/v1/chat/completions") {
+      await new Promise((r) => setTimeout(r, 800));
+      return json(200, { choices: [{ message: { content: "slow" } }], usage: { prompt_tokens: 20, completion_tokens: 5 } });
+    }
+
     if (path === "/broken/v1/chat/completions") return json(500, { error: { message: "boom" } });
 
     if (path.startsWith("/openai/v1/")) {

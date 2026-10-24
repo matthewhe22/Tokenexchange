@@ -38,6 +38,7 @@ await db.insert(schema.modelPrices).values([
   { model: "gemini-test", inputPrice: 1, outputPrice: 4 },
   { model: "azure-test", inputPrice: 1, outputPrice: 1 },
   { model: "orphan-test", inputPrice: 1, outputPrice: 1 },
+  { model: "slow-test", inputPrice: 1, outputPrice: 1 },
 ]);
 
 type NewChannel = typeof schema.channels.$inferInsert;
@@ -53,6 +54,7 @@ await db.insert(schema.channels).values([
   channel({ name: "anthropic relay", provider: "anthropic_compatible", source: "reseller", baseUrl: `${MOCK}/anthropic`, credentials: { apiKey: "up-anthropic" }, models: ["claude-test"], priority: 5 }),
   channel({ name: "bedrock", provider: "bedrock", source: "cloud", baseUrl: `${MOCK}/bedrock`, config: { region: "us-east-1" }, credentials: { apiKey: "up-bedrock" }, models: ["claude-test"], modelMapping: { "claude-test": "us.anthropic.claude-test-v1:0" } }),
   channel({ name: "vertex", provider: "vertex", source: "cloud", baseUrl: `${MOCK}/vertex`, config: { location: "global" }, credentials: { serviceAccount }, models: ["claude-vertex", "gemini-test"] }),
+  channel({ name: "slow", provider: "openai_compatible", source: "reseller", baseUrl: `${MOCK}/slow/v1`, credentials: { apiKey: "x" }, models: ["slow-test"] }),
   channel({ name: "gemini official", provider: "gemini", source: "official", baseUrl: `${MOCK}/gemini`, credentials: { apiKey: "up-gemini" }, models: ["gemini-test"], priority: 5 }),
 ]);
 
@@ -207,6 +209,58 @@ await step("GET /v1/models lists priced models", async () => {
   const res = await fetch(`${BASE}/v1/models`, { headers: { authorization: `Bearer ${key}` } });
   const ids = (await res.json()).data.map((m: { id: string }) => m.id);
   assert.ok(ids.includes("gpt-test") && ids.includes("claude-test"));
+});
+
+// ---------- P0: reservations, rate limits ----------
+const reservationsLeft = async () => (await db.select({ n: sql<number>`count(*)::int` }).from(schema.reservations))[0].n;
+
+await step("Every settled request released its reservation", async () => {
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(await reservationsLeft(), 0);
+});
+
+await step("Concurrent requests cannot overdraw: the first holds the whole small balance, the rest get 402", async () => {
+  await settings({ enabledSources: ["official", "cloud", "reseller"], modelSources: {}, maxAttempts: 3 });
+  await new Promise((r) => setTimeout(r, 10_500));
+  // estimate ≈ 4096 output tokens x $1/M = 4096 micro-USD > balance of 1000
+  await db.update(schema.users).set({ balance: 1000 }).where(eq(schema.users.id, user.id));
+  const results = await Promise.all(
+    Array.from({ length: 5 }, () => post("/v1/chat/completions", { model: "slow-test", messages: [] }).then((r) => r.status)),
+  );
+  assert.equal(results.filter((s) => s === 200).length, 1, String(results));
+  assert.equal(results.filter((s) => s === 402).length, 4, String(results));
+  await logsSettled((logs += 1));
+  await new Promise((r) => setTimeout(r, 300));
+  // actual cost 20 + 5 = 25; the rest of the hold is returned
+  const [u] = await db.select().from(schema.users).where(eq(schema.users.id, user.id));
+  assert.equal(u.balance, 1000 - 25);
+  assert.equal(await reservationsLeft(), 0);
+});
+
+await step("Stale reservations are released by the cron endpoint", async () => {
+  await db.update(schema.users).set({ balance: 500 }).where(eq(schema.users.id, user.id));
+  const [k] = await db.select().from(schema.apiKeys).where(eq(schema.apiKeys.userId, user.id));
+  await db.insert(schema.reservations).values({ userId: user.id, apiKeyId: k.id, amount: 300, createdAt: new Date(Date.now() - 60 * 60 * 1000) });
+  await db.update(schema.users).set({ balance: 200 }).where(eq(schema.users.id, user.id));
+  assert.equal((await fetch(`${BASE}/api/cron/release-reservations`)).status, 401);
+  const res = await fetch(`${BASE}/api/cron/release-reservations`, { headers: { authorization: `Bearer ${process.env.CRON_SECRET}` } });
+  assert.deepEqual(await res.json(), { released: 1 });
+  assert.equal((await db.select().from(schema.users).where(eq(schema.users.id, user.id)))[0].balance, 500);
+});
+
+await step("Per-key requests-per-minute limit returns 429 with Retry-After", async () => {
+  await db.update(schema.users).set({ balance: 1_000_000 }).where(eq(schema.users.id, user.id));
+  const limitedKey = generateApiKey();
+  await db.insert(schema.apiKeys).values({ userId: user.id, name: "limited", keyHash: sha256(limitedKey), keyPrefix: limitedKey.slice(0, 12), rpmLimit: 2 });
+  const auth = { authorization: `Bearer ${limitedKey}` };
+  const statuses = [];
+  for (let i = 0; i < 3; i++) statuses.push((await post("/v1/chat/completions", { model: "gpt-test", messages: [] }, auth)).status);
+  const blocked = await post("/v1/chat/completions", { model: "gpt-test", messages: [] }, auth);
+  // 2 allowed; the 3rd and 4th are limited (unless the minute rolled over mid-test)
+  assert.equal(statuses[0], 200);
+  assert.ok(statuses.includes(429) || blocked.status === 429, String(statuses));
+  if (blocked.status === 429) assert.ok(Number(blocked.headers.get("retry-after")) > 0);
+  logs = (await db.select({ n: sql<number>`count(*)::int` }).from(schema.usageLogs))[0].n;
 });
 
 // ---------- Stripe webhooks ----------

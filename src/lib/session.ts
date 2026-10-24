@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { jwtVerify, SignJWT } from "jose";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
@@ -13,8 +13,8 @@ function secret(): Uint8Array {
   return new TextEncoder().encode(s);
 }
 
-export async function createSession(userId: number): Promise<void> {
-  const token = await new SignJWT({})
+export async function createSession(userId: number, sessionVersion: number): Promise<void> {
+  const token = await new SignJWT({ sv: sessionVersion })
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(String(userId))
     .setIssuedAt()
@@ -39,7 +39,9 @@ export async function currentUser() {
   try {
     const { payload } = await jwtVerify(token, secret(), { algorithms: ["HS256"] });
     const [user] = await getDb().select().from(schema.users).where(eq(schema.users.id, Number(payload.sub)));
-    return user && !user.disabled ? user : null;
+    // A password change bumps sessionVersion, which signs out every older session.
+    if (!user || user.disabled || (payload.sv ?? 0) !== user.sessionVersion) return null;
+    return user;
   } catch {
     return null;
   }
@@ -58,4 +60,14 @@ export async function requireAdmin() {
   if (!user) redirect("/login?next=/admin");
   if (user.role !== "admin") redirect("/dashboard");
   return user;
+}
+
+/** Invalidates every session of the user (e.g. after a password change). Returns the new version. */
+export async function bumpSessionVersion(userId: number): Promise<number> {
+  const [row] = await getDb()
+    .update(schema.users)
+    .set({ sessionVersion: sql`${schema.users.sessionVersion} + 1` })
+    .where(eq(schema.users.id, userId))
+    .returning({ v: schema.users.sessionVersion });
+  return row.v;
 }

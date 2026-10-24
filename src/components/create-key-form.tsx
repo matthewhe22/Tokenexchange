@@ -12,6 +12,7 @@ export function CreateKeyForm({ userId }: { userId: number }) {
         <div><label>Name</label><input name="name" placeholder="default" /></div>
         <div><label>Spending limit (USD, blank = none)</label><input name="quota" type="number" step="any" /></div>
         <div><label>Expires at (optional)</label><input name="expiresAt" type="datetime-local" /></div>
+        <div><label>Requests / minute (blank = site default, 0 = unlimited)</label><input name="rpmLimit" type="number" min={0} /></div>
         <div className="wide"><label>Allowed models (comma separated, blank = all)</label><input name="allowedModels" /></div>
       </div>
       <div className="row" style={{ marginTop: 12 }}>

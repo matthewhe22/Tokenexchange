@@ -1,6 +1,7 @@
 import { ChangePasswordForm } from "@/components/change-password-form";
 import { VerifyBanner } from "@/components/verify-banner";
 import { requireUser } from "@/lib/session";
+import { signOutEverywhere } from "../actions";
 
 export default async function AccountPage() {
   const user = await requireUser();
@@ -14,6 +15,11 @@ export default async function AccountPage() {
       </div>
       <h2>Change password</h2>
       <ChangePasswordForm />
+      <h2>Sessions</h2>
+      <form action={signOutEverywhere} className="card row" style={{ justifyContent: "space-between" }}>
+        <span className="muted">Signed in on a shared or lost device? Sign out of every browser, including this one.</span>
+        <button className="danger">Sign out everywhere</button>
+      </form>
     </>
   );
 }

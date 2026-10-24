@@ -11,7 +11,7 @@ import { testChannel } from "@/lib/channel-test";
 import { invalidateChannels } from "@/lib/channels";
 import { decrypt, encrypt, generateApiKey, sha256 } from "@/lib/crypto";
 import { usdToMicros } from "@/lib/money";
-import { createSession, destroySession, requireAdmin } from "@/lib/session";
+import { requireAdmin } from "@/lib/session";
 import { saveRoutingSettings } from "@/lib/settings";
 import { PROVIDER_INFO } from "@/relay/providers/info";
 
@@ -26,24 +26,6 @@ const list = (v: string) =>
     .split(/[\n,]/)
     .map((s) => s.trim())
     .filter(Boolean);
-
-// ---------- auth ----------
-
-export async function login(_prev: { error?: string; email?: string } | undefined, form: FormData): Promise<{ error?: string; email?: string }> {
-  const email = str(form, "email").toLowerCase();
-  const password = str(form, "password");
-  const [user] = await getDb().select().from(schema.users).where(eq(schema.users.email, email));
-  if (!user || user.role !== "admin" || user.disabled || !user.passwordHash || !(await bcrypt.compare(password, user.passwordHash))) {
-    return { error: "Invalid email or password", email };
-  }
-  await createSession(user.id);
-  redirect("/admin");
-}
-
-export async function logout() {
-  await destroySession();
-  redirect("/admin/login");
-}
 
 // ---------- channels ----------
 
@@ -166,7 +148,12 @@ export async function saveRouting(form: FormData) {
     const parsed = list(srcs).filter((s): s is Source => SOURCES.includes(s as Source));
     if (parsed.length) modelSources[model] = parsed;
   }
-  await saveRoutingSettings({ enabledSources, modelSources, maxAttempts: Math.min(10, Math.max(1, num(form, "maxAttempts", 3))) });
+  await saveRoutingSettings({
+    enabledSources,
+    modelSources,
+    maxAttempts: Math.min(10, Math.max(1, num(form, "maxAttempts", 3))),
+    autoDisableAfter: Math.max(0, Math.floor(num(form, "autoDisableAfter", 0))),
+  });
   revalidatePath("/admin/settings");
 }
 
@@ -183,7 +170,7 @@ export async function createUser(form: FormData) {
   await db.transaction(async (tx) => {
     const [user] = await tx
       .insert(schema.users)
-      .values({ email, role, balance, passwordHash: password ? await bcrypt.hash(password, 10) : null })
+      .values({ email, role, balance, passwordHash: password ? await bcrypt.hash(password, 10) : null, emailVerifiedAt: new Date() })
       .returning();
     if (balance) await tx.insert(schema.balanceTransactions).values({ userId: user.id, amount: balance, type: "adjust", note: "initial balance" });
   });

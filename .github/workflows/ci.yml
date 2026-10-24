@@ -21,6 +21,9 @@ jobs:
       ENCRYPTION_KEY: MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE=
       SESSION_SECRET: ci-session-secret-0123456789abcdef0123
       NEXT_TELEMETRY_DISABLED: "1"
+      STRIPE_SECRET_KEY: sk_test_e2e
+      STRIPE_WEBHOOK_SECRET: whsec_e2e
+      STRIPE_API_BASE: http://localhost:4010
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

@@ -6,6 +6,7 @@ import { generateKeyPairSync } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
+import Stripe from "stripe";
 import * as schema from "../src/db/schema";
 import { encrypt, generateApiKey, sha256 } from "../src/lib/crypto";
 import { startMockUpstream } from "./mock-upstream";
@@ -14,7 +15,7 @@ const BASE = process.env.E2E_BASE_URL ?? "http://localhost:3000";
 const MOCK_PORT = 4010;
 const MOCK = `http://localhost:${MOCK_PORT}`;
 
-const client = postgres(process.env.DATABASE_URL!, { max: 1 });
+const client = postgres(process.env.DATABASE_URL!, { max: 1, onnotice: () => {} });
 const db = drizzle(client, { schema });
 const mock = await startMockUpstream(MOCK_PORT);
 
@@ -206,6 +207,44 @@ await step("GET /v1/models lists priced models", async () => {
   const res = await fetch(`${BASE}/v1/models`, { headers: { authorization: `Bearer ${key}` } });
   const ids = (await res.json()).data.map((m: { id: string }) => m.id);
   assert.ok(ids.includes("gpt-test") && ids.includes("claude-test"));
+});
+
+// ---------- Stripe webhooks ----------
+const stripe = new Stripe("sk_test_e2e");
+const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET ?? "whsec_e2e";
+let eventSeq = 0;
+const sendEvent = (type: string, object: Record<string, unknown>, signature?: string) => {
+  const payload = JSON.stringify({ id: `evt_${++eventSeq}`, object: "event", type, api_version: "2025-01-01", created: 0, data: { object } });
+  const header = signature ?? stripe.webhooks.generateTestHeaderString({ payload, secret: webhookSecret });
+  return fetch(`${BASE}/api/stripe/webhook`, { method: "POST", headers: { "stripe-signature": header, "content-type": "application/json" }, body: payload });
+};
+const balanceOf = async () => (await db.select().from(schema.users).where(eq(schema.users.id, user.id)))[0].balance;
+const paidSession = { id: "cs_e2e_1", object: "checkout.session", mode: "payment", payment_status: "paid", amount_subtotal: 2500, amount_total: 2500, currency: "usd", client_reference_id: String(user.id), metadata: { userId: String(user.id) } };
+
+await step("Stripe webhook rejects bad signatures", async () => {
+  const res = await sendEvent("checkout.session.completed", paidSession, "t=1,v1=deadbeef");
+  assert.equal(res.status, 400);
+});
+
+await step("Paid checkout credits the balance exactly once", async () => {
+  const before = await balanceOf();
+  assert.equal((await sendEvent("checkout.session.completed", paidSession)).status, 200);
+  assert.equal(await balanceOf(), before + 25_000_000);
+  assert.equal((await sendEvent("checkout.session.completed", paidSession)).status, 200);
+  assert.equal(await balanceOf(), before + 25_000_000);
+  await sendEvent("checkout.session.completed", { ...paidSession, id: "cs_e2e_unpaid", payment_status: "unpaid" });
+  assert.equal(await balanceOf(), before + 25_000_000);
+});
+
+await step("Refunds debit incrementally and idempotently", async () => {
+  await db.update(schema.users).set({ stripeCustomerId: "cus_e2e" }).where(eq(schema.users.id, user.id));
+  const before = await balanceOf();
+  const charge = { id: "ch_e2e", object: "charge", customer: "cus_e2e", amount: 2500, amount_refunded: 1000 };
+  await sendEvent("charge.refunded", charge);
+  await sendEvent("charge.refunded", charge);
+  assert.equal(await balanceOf(), before - 10_000_000);
+  await sendEvent("charge.refunded", { ...charge, amount_refunded: 1500 });
+  assert.equal(await balanceOf(), before - 15_000_000);
 });
 
 console.log("\nall e2e checks passed");

@@ -5,7 +5,14 @@ to call OpenAI, Anthropic and Gemini models. Requests are billed by token and ro
 sources you buy from: official vendors, cloud platforms and resellers.
 
 > Written from scratch against the vendors' public API documentation. **Contains no code from new-api or one-api**,
-> so their AGPL / attribution terms do not apply.
+> so their AGPL / attribution terms do not apply. Licensed under [MIT](LICENSE).
+
+**What's included**
+- Public site: landing page, pricing (generated from the price table), integration docs, terms and privacy templates
+- Self-service accounts: sign-up, email verification, password reset, optional Cloudflare Turnstile
+- Customer console: balance, daily spend, API keys (spending caps, model allow-lists), usage history, Stripe top-ups
+- Admin console: channels, prices, routing, users, balance adjustments, logs, margin dashboard
+- See [docs/GAP_ANALYSIS.md](docs/GAP_ANALYSIS.md) for a feature comparison with new-api and the improvement backlog
 
 ## Endpoints
 
@@ -61,13 +68,24 @@ npx tsx scripts/e2e.ts          # end-to-end against mock upstreams (truncates e
 1. **Database**: create a Postgres database from the Vercel Marketplace (Neon or Supabase).
    - Point `DATABASE_URL` at the **pooled** connection string (Supabase port 6543 / Neon `-pooler`).
    - Point `DATABASE_URL_UNPOOLED` at the direct connection string.
-2. **Environment variables**: add `DATABASE_URL`, `DATABASE_URL_UNPOOLED`, `ENCRYPTION_KEY` and `SESSION_SECRET` in the Vercel project settings.
+2. **Environment variables**: in the Vercel project settings, add:
+   - Required: `DATABASE_URL`, `DATABASE_URL_UNPOOLED`, `ENCRYPTION_KEY`, `SESSION_SECRET`, `APP_URL`.
+   - For payments: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`.
+   - For email: `RESEND_API_KEY`, `EMAIL_FROM`.
+   - Optional bot protection: `NEXT_PUBLIC_TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY`.
+   - See `.env.example` for what each one does.
    - Generate `ENCRYPTION_KEY` with `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`.
    - **Do not change `ENCRYPTION_KEY` after deploying**, or the stored upstream credentials can no longer be decrypted.
 3. Import this repository into Vercel. The framework is detected as Next.js automatically.
 4. Run migrations and seed once from your machine:
    `DATABASE_URL_UNPOOLED=… ADMIN_EMAIL=… ADMIN_PASSWORD=… npm run db:migrate && npm run db:seed`
-5. Sign in at `/admin` and set things up:
+5. **Stripe webhook**: in the Stripe dashboard, add an endpoint at `https://<your-domain>/api/stripe/webhook` that sends these events:
+   - `checkout.session.completed`
+   - `checkout.session.async_payment_succeeded`
+   - `charge.refunded`
+
+   Put its signing secret in `STRIPE_WEBHOOK_SECRET`.
+6. Sign in at `/login` with the admin account (you will land on `/admin`) and set things up:
    - Add model prices.
    - Add channels, then use "Send test request" on each one.
    - Create a user, then create an API key for them.

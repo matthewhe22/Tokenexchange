@@ -29,7 +29,7 @@ const [existing] = await db.select().from(schema.users).where(eq(schema.users.em
 if (existing) {
   console.log(`admin ${email} already exists`);
 } else {
-  await db.insert(schema.users).values({ email, role: "admin", passwordHash: await bcrypt.hash(password, 10) });
+  await db.insert(schema.users).values({ email, role: "admin", passwordHash: await bcrypt.hash(password, 10), emailVerifiedAt: new Date() });
   console.log(`created admin ${email}`);
 }
 await db.insert(schema.modelPrices).values(EXAMPLE_PRICES).onConflictDoNothing();

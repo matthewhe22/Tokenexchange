@@ -26,11 +26,17 @@ export function invalidateChannels(): void {
   invalidate("channels");
 }
 
-export async function markChannelFailure(id: number, error: string): Promise<void> {
-  await getDb()
+export async function markChannelFailure(id: number, error: string, autoDisableAfter = 0): Promise<void> {
+  const [row] = await getDb()
     .update(schema.channels)
     .set({ failCount: sql`${schema.channels.failCount} + 1`, lastError: error.slice(0, 1000), lastErrorAt: new Date() })
-    .where(eq(schema.channels.id, id));
+    .where(eq(schema.channels.id, id))
+    .returning({ failCount: schema.channels.failCount });
+  if (autoDisableAfter > 0 && row && row.failCount >= autoDisableAfter) {
+    await getDb().update(schema.channels).set({ enabled: false }).where(eq(schema.channels.id, id));
+    invalidateChannels();
+    console.warn(`channel ${id} auto-disabled after ${row.failCount} consecutive failures`);
+  }
 }
 
 export async function markChannelHealthy(id: number): Promise<void> {

@@ -45,9 +45,17 @@ export async function currentUser() {
   }
 }
 
+/** Guards customer pages and server actions. */
+export async function requireUser() {
+  const user = await currentUser();
+  if (!user) redirect("/login");
+  return user;
+}
+
 /** Guards admin pages and server actions. */
 export async function requireAdmin() {
   const user = await currentUser();
-  if (!user || user.role !== "admin") redirect("/admin/login");
+  if (!user) redirect("/login?next=/admin");
+  if (user.role !== "admin") redirect("/dashboard");
   return user;
 }

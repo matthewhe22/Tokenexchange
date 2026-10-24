@@ -10,9 +10,11 @@ export interface RoutingSettings {
   modelSources: Record<string, Source[]>;
   /** How many channels to try before giving up on a request. */
   maxAttempts: number;
+  /** Disable a channel after this many consecutive failures (0 = never). */
+  autoDisableAfter: number;
 }
 
-export const DEFAULT_ROUTING: RoutingSettings = { enabledSources: [...SOURCES], modelSources: {}, maxAttempts: 3 };
+export const DEFAULT_ROUTING: RoutingSettings = { enabledSources: [...SOURCES], modelSources: {}, maxAttempts: 3, autoDisableAfter: 0 };
 
 export async function getRoutingSettings(): Promise<RoutingSettings> {
   return cached("settings:routing", async () => {

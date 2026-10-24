@@ -44,6 +44,16 @@ export function startMockUpstream(port: number): Promise<{ received: Received[];
       res.end(JSON.stringify(data));
     };
 
+    // Stripe API (the gateway's SDK is pointed here via STRIPE_API_BASE)
+    if (path === "/v1/customers") return json(200, { id: "cus_mock", object: "customer" });
+    if (path === "/v1/checkout/sessions") {
+      return json(200, { id: "cs_mock", object: "checkout.session", url: `http://localhost:${port}/checkout/cs_mock` });
+    }
+    if (path.startsWith("/checkout/")) {
+      res.writeHead(200, { "content-type": "text/html" });
+      return res.end("<h1>Mock Stripe Checkout</h1>");
+    }
+
     if (path === "/broken/v1/chat/completions") return json(500, { error: { message: "boom" } });
 
     if (path.startsWith("/openai/v1/")) {

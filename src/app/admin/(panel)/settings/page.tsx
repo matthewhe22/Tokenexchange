@@ -37,6 +37,10 @@ export default async function SettingsPage() {
           <label>Max channels to try per request</label>
           <input name="maxAttempts" type="number" min={1} max={10} defaultValue={routing.maxAttempts} />
         </div>
+        <div style={{ maxWidth: 360 }}>
+          <label>Auto-disable a channel after this many consecutive failures (0 = never)</label>
+          <input name="autoDisableAfter" type="number" min={0} defaultValue={routing.autoDisableAfter} />
+        </div>
         <div><button>Save routing</button></div>
       </form>
       <p className="muted">Changes reach every serverless instance within about 10 seconds.</p>

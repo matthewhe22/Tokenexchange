@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { requireAdmin } from "@/lib/session";
-import { logout } from "../actions";
+import { logout } from "@/app/(site)/auth-actions";
 
 export const dynamic = "force-dynamic";
 

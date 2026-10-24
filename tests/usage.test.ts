@@ -51,3 +51,21 @@ describe("chargeFor", () => {
     expect(r).toEqual({ cost: Math.ceil(4830 * 1.2), upstreamCost: Math.round(4830 * 0.7) });
   });
 });
+
+describe("formatting", async () => {
+  const { formatUsd } = await import("@/lib/money");
+  const { perMillion } = await import("@/lib/catalog");
+  it("formats balances and per-request costs", () => {
+    expect(formatUsd(0)).toBe("$0.00");
+    expect(formatUsd(25_000_000)).toBe("$25.00");
+    expect(formatUsd(-1_500_000)).toBe("-$1.50");
+    expect(formatUsd(123)).toBe("$0.000123");
+    expect(formatUsd(45_600)).toBe("$0.0456");
+  });
+  it("formats per-million prices consistently", () => {
+    expect(perMillion(2.5)).toBe("$2.50");
+    expect(perMillion(0.6)).toBe("$0.60");
+    expect(perMillion(0.075)).toBe("$0.075");
+    expect(perMillion(null)).toBe("—");
+  });
+});

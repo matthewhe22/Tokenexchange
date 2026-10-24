@@ -111,7 +111,7 @@ export async function relay(req: Request, protocol: Protocol, opts: RelayOptions
       res = await fetch(call.request);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      waitUntil(markChannelFailure(ch.id, message));
+      waitUntil(markChannelFailure(ch.id, message, routing.autoDisableAfter));
       lastError = { status: 502, message };
       continue;
     }
@@ -120,7 +120,7 @@ export async function relay(req: Request, protocol: Protocol, opts: RelayOptions
       const text = await res.text().catch(() => "");
       const detail = `HTTP ${res.status}: ${text.slice(0, 500)}`;
       if (RETRYABLE.has(res.status)) {
-        waitUntil(markChannelFailure(ch.id, detail));
+        waitUntil(markChannelFailure(ch.id, detail, routing.autoDisableAfter));
         lastError = { status: res.status, message: detail };
         continue;
       }

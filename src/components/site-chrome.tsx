@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getDict, getLocale } from "@/lib/i18n";
 import { currentUser } from "@/lib/session";
 import { LangSwitch } from "./lang-switch";
+import { TenonLogo } from "./logo";
 
 export async function SiteHeader() {
   const [user, t, locale] = await Promise.all([currentUser(), getDict(), getLocale()]);
@@ -9,7 +10,7 @@ export async function SiteHeader() {
     <header className="site-header">
       <div className="site-inner row" style={{ justifyContent: "space-between" }}>
         <Link href="/" className="logo">
-          <span className="logo-mark">⇄</span> TokenExchange
+          <TenonLogo size={30} />
         </Link>
         <nav className="row site-nav">
           <Link href="/batch">{t["nav.batch"]}</Link>
@@ -35,7 +36,10 @@ export async function SiteFooter() {
   return (
     <footer className="site-footer">
       <div className="site-inner row" style={{ justifyContent: "space-between" }}>
-        <span className="muted">© {new Date().getFullYear()} TokenExchange</span>
+        <span className="row" style={{ gap: 12 }}>
+          <TenonLogo size={22} />
+          <span className="muted">© {new Date().getFullYear()} Tenon</span>
+        </span>
         <nav className="row">
           <Link href="/batch">{t["nav.batch"]}</Link>
           <Link href="/pricing">{t["nav.pricing"]}</Link>

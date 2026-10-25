@@ -1,6 +1,7 @@
-# TokenExchange
+# Tenon 榫卯
 
-A token wholesale and resale platform. You buy model capacity upstream, and customers use one API key
+A token wholesale and resale platform, branded **Tenon** (see [docs/BRAND.md](docs/BRAND.md); the codebase and API
+identifiers keep the original name, TokenExchange). You buy model capacity upstream, and customers use one API key
 to call OpenAI, Anthropic and Gemini models. Requests are billed by token and routed across upstream
 sources you buy from: official vendors, cloud platforms and resellers.
 

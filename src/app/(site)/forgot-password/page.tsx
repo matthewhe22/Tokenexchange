@@ -2,7 +2,7 @@ import { getDict } from "@/lib/i18n";
 import { ForgotPasswordForm } from "@/components/auth-forms";
 import { turnstileSiteKey } from "@/lib/turnstile";
 
-export const metadata = { title: "Reset password · TokenExchange" };
+export const metadata = { title: "Reset password" };
 
 export default async function ForgotPasswordPage() {
   const t = await getDict();

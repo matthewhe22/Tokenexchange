@@ -2,7 +2,7 @@ import { getDict } from "@/lib/i18n";
 import { LoginForm, OAuthButtons } from "@/components/auth-forms";
 import { enabledOAuthProviders } from "@/lib/oauth";
 
-export const metadata = { title: "Sign in · TokenExchange" };
+export const metadata = { title: "Sign in" };
 
 const ERRORS: Record<string, string> = {
   oauth: "Sign-in was cancelled or expired. Please try again.",

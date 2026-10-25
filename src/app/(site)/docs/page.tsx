@@ -4,7 +4,7 @@ import { SdkTabs } from "@/components/sdk-tabs";
 import { batchSnippets, sdkSnippets } from "@/lib/snippets";
 import { appUrl } from "@/lib/url";
 
-export const metadata = { title: "Docs · TokenExchange" };
+export const metadata = { title: "Docs" };
 
 export default function DocsPage() {
   const base = appUrl();
@@ -68,15 +68,15 @@ export default function DocsPage() {
         <h3>Claude Code</h3>
         <CodeBlock code={`export ANTHROPIC_BASE_URL=${base}\nexport ANTHROPIC_AUTH_TOKEN=sk-tx-...\nclaude`} />
         <h3>Codex CLI</h3>
-        <p className="muted">Add a provider to <code>~/.codex/config.toml</code>, then export <code>TOKENEXCHANGE_API_KEY</code>:</p>
+        <p className="muted">Add a provider to <code>~/.codex/config.toml</code>, then export <code>TENON_API_KEY</code>:</p>
         <CodeBlock
-          code={`model_provider = "tokenexchange"
+          code={`model_provider = "tenon"
 model = "gpt-4.1"
 
-[model_providers.tokenexchange]
-name = "TokenExchange"
+[model_providers.tenon]
+name = "Tenon"
 base_url = "${base}/v1"
-env_key = "TOKENEXCHANGE_API_KEY"
+env_key = "TENON_API_KEY"
 wire_api = "responses"`}
         />
         <h3>Anything OpenAI-compatible</h3>

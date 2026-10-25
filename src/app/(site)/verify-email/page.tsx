@@ -3,7 +3,7 @@ import Link from "next/link";
 import { getDb, schema } from "@/db";
 import { consumeAuthToken } from "@/lib/auth-tokens";
 
-export const metadata = { title: "Verify email · TokenExchange" };
+export const metadata = { title: "Verify email" };
 
 export default async function VerifyEmailPage({ searchParams }: { searchParams: Promise<{ token?: string }> }) {
   const { token } = await searchParams;

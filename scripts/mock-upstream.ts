@@ -61,6 +61,10 @@ export function startMockUpstream(port: number): Promise<{ received: Received[];
     const charge = path.match(/^\/v1\/charges\/([^/]+)$/);
     if (charge) return json(200, { id: charge[1], object: "charge", customer: charge[1] === "ch_orphan" ? null : "cus_e2e", amount: 2500 });
     if (path === "/v1/checkout/sessions") {
+      // A customer created with the other mode's keys (live vs test), as real Stripe reports it.
+      if (body.customer === "cus_stale") {
+        return json(400, { error: { type: "invalid_request_error", code: "resource_missing", param: "customer", message: "No such customer: 'cus_stale'; a similar object exists in live mode, but a test mode key was used to make this request." } });
+      }
       return json(200, { id: "cs_mock", object: "checkout.session", url: `http://localhost:${port}/checkout/cs_mock` });
     }
     if (path.startsWith("/checkout/")) {

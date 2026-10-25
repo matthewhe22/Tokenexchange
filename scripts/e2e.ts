@@ -756,6 +756,14 @@ const sendEvent = (type: string, object: Record<string, unknown>, signature?: st
 const balanceOf = async () => (await db.select().from(schema.users).where(eq(schema.users.id, user.id)))[0].balance;
 const paidSession = { id: "cs_e2e_1", object: "checkout.session", mode: "payment", payment_status: "paid", amount_subtotal: 2500, amount_total: 2500, currency: "usd", client_reference_id: String(user.id), metadata: { userId: String(user.id) } };
 
+await step("Checkout recovers when the stored Stripe customer belongs to the other mode (live vs test)", async () => {
+  const { createTopupCheckout } = await import("../src/lib/stripe");
+  await db.update(schema.users).set({ stripeCustomerId: "cus_stale" }).where(eq(schema.users.id, user.id));
+  const [u] = await db.select().from(schema.users).where(eq(schema.users.id, user.id));
+  assert.match(await createTopupCheckout(u, 10), /\/checkout\/cs_mock$/);
+  assert.equal((await db.select().from(schema.users).where(eq(schema.users.id, user.id)))[0].stripeCustomerId, "cus_mock");
+});
+
 await step("Stripe webhook rejects bad signatures", async () => {
   const res = await sendEvent("checkout.session.completed", paidSession, "t=1,v1=deadbeef");
   assert.equal(res.status, 400);

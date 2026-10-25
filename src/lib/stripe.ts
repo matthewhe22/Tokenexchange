@@ -36,11 +36,25 @@ export async function createTopupCheckout(user: User, amountUsd: number): Promis
     throw new Error(`top-up must be between $${TOPUP_MIN_USD} and $${TOPUP_MAX_USD}`);
   }
   const stripe = getStripe();
-  let customer = user.stripeCustomerId;
-  if (!customer) {
-    customer = (await stripe.customers.create({ email: user.email, metadata: { userId: String(user.id) } })).id;
-    await getDb().update(schema.users).set({ stripeCustomerId: customer }).where(eq(schema.users.id, user.id));
+  const newCustomer = async () => {
+    const id = (await stripe.customers.create({ email: user.email, metadata: { userId: String(user.id) } })).id;
+    await getDb().update(schema.users).set({ stripeCustomerId: id }).where(eq(schema.users.id, user.id));
+    return id;
+  };
+  const customer = user.stripeCustomerId ?? (await newCustomer());
+  try {
+    return await checkoutUrl(stripe, user, customer, cents);
+  } catch (err) {
+    // The stored customer belongs to the other mode (test vs live keys) or was deleted in Stripe:
+    // start a new one rather than leaving the user unable to pay.
+    if (err instanceof Stripe.errors.StripeInvalidRequestError && err.code === "resource_missing" && err.param === "customer") {
+      return checkoutUrl(stripe, user, await newCustomer(), cents);
+    }
+    throw err;
   }
+}
+
+async function checkoutUrl(stripe: Stripe, user: User, customer: string, cents: number): Promise<string> {
   const session = await stripe.checkout.sessions.create({
     mode: "payment",
     customer,

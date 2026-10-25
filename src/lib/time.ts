@@ -67,6 +67,14 @@ export function lastNDays(n: number, now: Date = new Date()): { days: string[]; 
   return { days, since: zonedMidnight(y, m, d) };
 }
 
+/** A duration for tables: "850 ms", "12.3 s", "4 min", "2.5 h". */
+export function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms} ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)} s`;
+  if (ms < 3_600_000) return `${Math.round(ms / 60_000)} min`;
+  return `${(ms / 3_600_000).toFixed(1)} h`;
+}
+
 /** Start of today in the app time zone. */
 export function startOfToday(now: Date = new Date()): Date {
   return lastNDays(1, now).since;

@@ -28,3 +28,13 @@ describe("Melbourne display time", () => {
     expect(since.toISOString()).toBe("2026-10-02T14:00:00.000Z");
   });
 });
+
+describe("durations", async () => {
+  const { formatDuration } = await import("@/lib/time");
+  it("picks a readable unit", () => {
+    expect(formatDuration(850)).toBe("850 ms");
+    expect(formatDuration(12_300)).toBe("12.3 s");
+    expect(formatDuration(240_000)).toBe("4 min");
+    expect(formatDuration(9_000_000)).toBe("2.5 h");
+  });
+});

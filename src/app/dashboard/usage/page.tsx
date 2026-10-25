@@ -2,7 +2,7 @@ import { and, desc, eq, gte, sql } from "drizzle-orm";
 import { getDb, schema } from "@/db";
 import { formatUsd } from "@/lib/money";
 import { requireUser } from "@/lib/session";
-import { formatDateTime, tzLabel } from "@/lib/time";
+import { formatDateTime, formatDuration, tzLabel } from "@/lib/time";
 
 export default async function UsagePage() {
   const user = await requireUser();
@@ -59,11 +59,11 @@ export default async function UsagePage() {
               <tr key={log.id}>
                 <td>{formatDateTime(log.createdAt, { seconds: true })}</td>
                 <td>{key ?? "deleted"}</td>
-                <td className="mono">{log.model}{log.stream ? " · stream" : ""}</td>
+                <td className="mono">{log.model}{log.stream ? " · stream" : ""}{log.serviceTier ? ` · ${log.serviceTier}` : ""}</td>
                 <td><span className={log.status < 400 ? "badge ok" : "badge off"}>{log.status}</span></td>
                 <td>{log.inputTokens} / {log.cacheReadTokens + log.cacheWriteTokens} / {log.outputTokens}</td>
                 <td>{formatUsd(log.cost)}</td>
-                <td>{log.latencyMs} ms</td>
+                <td>{formatDuration(log.latencyMs)}</td>
               </tr>
             ))}
           </tbody>

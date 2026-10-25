@@ -445,12 +445,13 @@ export async function listBatches(userId: number, api: Api, limit: number, after
   const b = schema.batches;
   // Batches that never reached an upstream were answered with an error; their ids were never returned.
   const where = [eq(b.userId, userId), eq(b.api, api), isNotNull(b.upstreamId)];
-  if (after) where.push(sql`${b.createdAt} < (select created_at from batches where id = ${after} and user_id = ${userId})`);
+  // (created_at, id) so batches created in the same instant are neither skipped nor repeated.
+  if (after) where.push(sql`(${b.createdAt}, ${b.id}) < (select created_at, id from batches where id = ${after} and user_id = ${userId})`);
   const rows = await getDb()
     .select()
     .from(b)
     .where(and(...where))
-    .orderBy(desc(b.createdAt))
+    .orderBy(desc(b.createdAt), desc(b.id))
     .limit(limit + 1);
   return { rows: rows.slice(0, limit), hasMore: rows.length > limit };
 }

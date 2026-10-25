@@ -1,7 +1,7 @@
 import { and, desc, eq, type SQL } from "drizzle-orm";
 import { getDb, schema } from "@/db";
 import { formatUsd } from "@/lib/money";
-import { formatDateTime, tzLabel } from "@/lib/time";
+import { formatDateTime, formatDuration, tzLabel } from "@/lib/time";
 
 export default async function LogsPage({ searchParams }: { searchParams: Promise<{ user?: string; model?: string; errors?: string }> }) {
   const sp = await searchParams;
@@ -39,7 +39,7 @@ export default async function LogsPage({ searchParams }: { searchParams: Promise
                 <td>{formatDateTime(log.createdAt, { seconds: true }).slice(5)}</td>
                 <td>{email ?? log.userId}</td>
                 <td className="mono">{log.endpoint}{log.stream ? " (stream)" : ""}</td>
-                <td className="mono">{log.model}</td>
+                <td className="mono">{log.model}{log.serviceTier ? ` · ${log.serviceTier}` : ""}</td>
                 <td>{channel ?? "—"}</td>
                 <td>
                   <span className={log.status < 400 && !log.error ? "badge ok" : "badge off"}>{log.status}</span>
@@ -48,7 +48,7 @@ export default async function LogsPage({ searchParams }: { searchParams: Promise
                 <td>{log.inputTokens} / {log.outputTokens} / {log.cacheReadTokens + log.cacheWriteTokens}</td>
                 <td>{formatUsd(log.cost)}</td>
                 <td>{formatUsd(log.upstreamCost)}</td>
-                <td>{log.latencyMs} ms</td>
+                <td>{formatDuration(log.latencyMs)}</td>
               </tr>
             ))}
           </tbody>

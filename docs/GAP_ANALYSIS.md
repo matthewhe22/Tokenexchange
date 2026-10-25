@@ -108,6 +108,8 @@
 | A 容量批发（PTU / 预留吞吐） | 有优先级 / 重试，README 未提固定成本 | ✅ 渠道可设"每小时固定成本、每分钟 token 容量、承诺到期日"；容量用满或返回 429 时溢出到按量渠道且不计失败；**Capacity** 页显示利用率、盈亏平衡利用率、峰值、毛利和到期提醒；看板毛利按时间分摊固定成本 | 固定成本渠道的单次请求不计边际成本 |
 | B Batch（异步五折） | README 只有 `/v1/tasks`（视频 / 音乐），未列 batch | ✅ OpenAI `/v1/files` + `/v1/batches`（OpenAI、Azure 渠道），Anthropic `/v1/messages/batches`（Anthropic 官方渠道）；创建时按最坏情况预扣（最长 48 小时），结束后按上游实际用量、以模型的 batch 加价倍数结算；结果流式下载并替换上游模型名 | Bedrock / Vertex / Gemini 的 batch 需要 S3 / GCS，暂不支持 |
 | OpenAI `service_tier` | 未注明 | ✅ 默认移除；模型配了 flex / priority 价格才放行，并按上游返回的实际档位计费；Anthropic 的 `service_tier` 一律移除 | 修复前：客户传 `priority` 我们按标准价收、上游按高价扣 |
+| **无 usage 的响应** | 未注明 | ✅ 成功但上游没报 usage 时：按持有额（最坏情况）计费，记 `metering_unavailable`，并让调用方明确失败（非流式 502 `code: metering_unavailable`；流式先发协议错误事件再中断流） | 修复前：cost=0，把预授权全额退回，客户白拿一次成功响应 —— 实际在漏钱 |
+| 来源默认值 | 未注明 | ✅ 默认只启用 `cloud`（Bedrock / Vertex / Azure 这类有转售权的采购渠道）；`official` / `reseller` 需管理员显式打开 | 修复前：三类来源默认全开，等于默认把 OpenAI / Anthropic / Gemini 的账号访问转卖给第三方，违反三家条款 |
 | C 授权渠道（发票、账期、SLA） | 未注明 | ❌ | 暂不做 |
 
 ## 8. 我们比 new-api 好的地方

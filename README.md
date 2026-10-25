@@ -58,6 +58,13 @@ Streaming and non-streaming are both supported, and both are billed from the ups
 | **cloud** | Azure OpenAI, AWS Bedrock (Claude), Google Vertex AI (Claude + Gemini) | OpenAI / Anthropic / Gemini |
 | **reseller** | Any OpenAI-compatible or Anthropic-compatible relay (e.g. DeepInfra, Novita, GMI Cloud); extra request headers such as GMI's `X-Organization-ID` can be set per channel | OpenAI / Anthropic |
 
+**Only `cloud` is on by default.** AWS Bedrock, Google Vertex and Azure are the three sources that can
+be bought under a partner/reseller programme; the vendors' own APIs forbid reselling account access
+(OpenAI Services Agreement §3.1, Anthropic Commercial Terms §D.4(a), Google APIs ToS §4(a)(1)), and
+grey-market relays are what that ban exists for. Turn `official` or `reseller` on in **Routing** only
+once you hold the vendor's written permission — on a fresh install a request that only an `official`
+channel could serve is refused with 503 rather than served.
+
 How routing works:
 - A model must have a row in **Models & prices**. Only channels whose model list includes it are considered.
 - Under **Routing** you can turn whole sources on or off, and restrict a single model to particular sources (e.g. `claude-opus-4-1: official, cloud`).
@@ -66,6 +73,14 @@ How routing works:
 - 400-class client errors are returned to the caller unchanged and do not trigger a retry.
 
 Billing: customer price = list price × model `markup`; upstream cost = list price × channel `cost multiplier`. The dashboard shows gross margin per source.
+
+**Unmetered responses are never free.** Every request is priced from the upstream's own usage report.
+When an upstream returns success *without* a usage report — a relay that ignores
+`stream_options.include_usage`, or a stream that dies before its usage event — the request is charged
+the amount that was held for it (the worst case), the row is logged with `metering_unavailable`, and
+the caller is told: a non-streamed request gets a 502 with `code: "metering_unavailable"`, and a
+streamed one gets the protocol's error event followed by an aborted stream. Fix the channel (or turn
+it off) rather than letting it serve traffic for free.
 
 - **`service_tier`**: OpenAI's `flex` and `priority` are only passed upstream when the model has a flex / priority price
   (and only to official OpenAI channels); otherwise the field is removed. Requests are billed at the tier the upstream

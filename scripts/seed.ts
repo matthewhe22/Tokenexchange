@@ -7,13 +7,22 @@ import * as schema from "../src/db/schema";
 
 // Creates the first admin and a starter price list.
 // The prices are examples only: check each vendor's current pricing page before going live.
+//
+// `flexMarkup` / `batchMarkup` are what the customer pays as a multiple of list, on tiers where the
+// vendor charges half of list upstream (OpenAI flex + batch, Anthropic batches, and batches for
+// embeddings). 0.8 = list - 20%, i.e. a 37.5% gross margin. Leave them null for models whose vendor
+// has no such tier, or that the gateway cannot run on one: a null tier means the request is refused
+// by the batch endpoint and the OpenAI `flex` service tier is stripped.
+const HALF_PRICE_BATCH = 0.8;
+const HALF_PRICE_FLEX = 0.9;
 const EXAMPLE_PRICES: (typeof schema.modelPrices.$inferInsert)[] = [
-  { model: "gpt-4o", inputPrice: 2.5, outputPrice: 10, cacheReadPrice: 1.25, maxOutputTokens: 16_384 },
-  { model: "gpt-4o-mini", inputPrice: 0.15, outputPrice: 0.6, cacheReadPrice: 0.075, maxOutputTokens: 16_384 },
-  { model: "gpt-4.1", inputPrice: 2, outputPrice: 8, cacheReadPrice: 0.5, maxOutputTokens: 32_768 },
-  { model: "text-embedding-3-small", inputPrice: 0.02, outputPrice: 0 },
-  { model: "claude-sonnet-4-5", inputPrice: 3, outputPrice: 15, cacheReadPrice: 0.3, cacheWritePrice: 3.75, maxOutputTokens: 64_000 },
-  { model: "claude-haiku-4-5", inputPrice: 1, outputPrice: 5, cacheReadPrice: 0.1, cacheWritePrice: 1.25, maxOutputTokens: 64_000 },
+  { model: "gpt-4o", inputPrice: 2.5, outputPrice: 10, cacheReadPrice: 1.25, maxOutputTokens: 16_384, batchMarkup: HALF_PRICE_BATCH },
+  { model: "gpt-4o-mini", inputPrice: 0.15, outputPrice: 0.6, cacheReadPrice: 0.075, maxOutputTokens: 16_384, batchMarkup: HALF_PRICE_BATCH },
+  { model: "gpt-4.1", inputPrice: 2, outputPrice: 8, cacheReadPrice: 0.5, maxOutputTokens: 32_768, flexMarkup: HALF_PRICE_FLEX, batchMarkup: HALF_PRICE_BATCH },
+  { model: "text-embedding-3-small", inputPrice: 0.02, outputPrice: 0, batchMarkup: HALF_PRICE_BATCH },
+  { model: "claude-sonnet-4-5", inputPrice: 3, outputPrice: 15, cacheReadPrice: 0.3, cacheWritePrice: 3.75, maxOutputTokens: 64_000, batchMarkup: HALF_PRICE_BATCH },
+  { model: "claude-haiku-4-5", inputPrice: 1, outputPrice: 5, cacheReadPrice: 0.1, cacheWritePrice: 1.25, maxOutputTokens: 64_000, batchMarkup: HALF_PRICE_BATCH },
+  // Gemini batches need GCS buckets and are not supported by the gateway, so no batch price here.
   {
     model: "gemini-2.5-pro",
     inputPrice: 1.25,

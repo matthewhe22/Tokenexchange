@@ -88,6 +88,19 @@ export function startMockUpstream(port: number): Promise<{ received: Received[];
 
     if (path === "/ptu/v1/chat/completions") return json(429, { error: { message: "Requests to the deployment have exceeded its provisioned capacity" } });
 
+    // Answers successfully but never reports usage: the gateway must charge the held worst case and
+    // fail the request loudly, never serve it for free.
+    if (path === "/nomusage/v1/chat/completions") {
+      if (body.stream) {
+        return sse(res, [
+          [undefined, { id: "c1", choices: [{ delta: { content: "po" } }] }],
+          [undefined, { id: "c1", choices: [{ delta: { content: "ng" } }] }],
+          [undefined, "[DONE]"],
+        ]);
+      }
+      return json(200, { id: "c1", choices: [{ message: { role: "assistant", content: "pong" } }] });
+    }
+
     if (path.startsWith("/openai/v1/")) {
       if (req.headers.authorization !== "Bearer up-openai") return json(401, { error: { message: "bad key" } });
       // ---- batch API ----

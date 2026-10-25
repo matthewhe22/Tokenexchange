@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { getDb, schema } from "@/db";
-import { SOURCES, type Source } from "@/db/schema";
+import type { Source } from "@/db/schema";
 import { cached, invalidate } from "./cache";
 
 export interface RoutingSettings {
@@ -18,7 +18,14 @@ export interface RoutingSettings {
   allowConversion: boolean;
 }
 
-export const DEFAULT_ROUTING: RoutingSettings = { enabledSources: [...SOURCES], modelSources: {}, maxAttempts: 3, autoDisableAfter: 0, affinity: true, allowConversion: true };
+/**
+ * Turned off by default: the model vendors' own APIs forbid reselling account access (OpenAI
+ * Services Agreement §3.1, Anthropic Commercial Terms §D.4(a), Google APIs ToS §4(a)(1)), and
+ * grey-market relays are what that ban exists for. Only `cloud` (Bedrock / Vertex / Azure, i.e.
+ * capacity bought under a partner or reseller programme) is safe to start with; enable `official`
+ * or `reseller` only with the vendor's written permission.
+ */
+export const DEFAULT_ROUTING: RoutingSettings = { enabledSources: ["cloud"], modelSources: {}, maxAttempts: 3, autoDisableAfter: 0, affinity: true, allowConversion: true };
 
 export async function getRoutingSettings(): Promise<RoutingSettings> {
   return cached("settings:routing", async () => {

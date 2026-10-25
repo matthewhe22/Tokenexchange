@@ -4,17 +4,17 @@ import { getActiveChannels, markChannelFailure, markChannelHealthy, type LoadedC
 import { addToWindow, hit, peek } from "@/lib/ratelimit";
 import { applyRequestedTier, reportedTier, tierFactors, type Tier } from "@/lib/tiers";
 import { runMaintenance } from "@/lib/maintenance";
-import { applyOutputCap, planCost, releaseStaleReservations, reserve } from "@/lib/reservations";
+import { applyOutputCap, planCost, releaseStaleReservations, reserve, type CostPlan } from "@/lib/reservations";
 import { priceForGroup } from "@/lib/groups";
 import { getLimitSettings, getRoutingSettings } from "@/lib/settings";
 import { authenticateApiKey, extractApiKey, type ApiKeyRow, type UserRow } from "./auth";
 import { bedrockToSSE } from "./bedrock-stream";
 import { conversionTargets, ConversionError, converterFor } from "./convert";
-import { relayError } from "./errors";
+import { METERING_UNAVAILABLE, METERING_UNAVAILABLE_MESSAGE, relayError, unmeteredTail } from "./errors";
 import { buildUpstreamCall } from "./providers";
 import { orderChannels } from "./router";
 import { SSEParser } from "./sse";
-import { tapStream } from "./stream";
+import { finalizeStream, tapStream } from "./stream";
 import { StreamUsageTracker, usageFromBody } from "./usage";
 import type { Json, Protocol, RelayRequest, Usage } from "./types";
 
@@ -53,6 +53,10 @@ interface Ctx {
   endpoint: string;
   started: number;
   reservationId: number | null;
+  /** Worst case priced for this request; charged when the upstream reports no usage. */
+  plan: CostPlan;
+  /** Micro-USD held for this request. */
+  heldAmount: number;
   settled: boolean;
   /** Set when the request was translated for an upstream speaking another protocol. */
   via?: Protocol;
@@ -99,8 +103,22 @@ function billedTier(ctx: Ctx, ch: LoadedChannel, target: Protocol | undefined, r
   return tierFactors(ctx.price, tier) ? tier : "standard";
 }
 
+/** The worst-case usage a hold was priced at: used to cost a request the upstream left unmetered. */
+function heldUsage(ctx: Ctx): Usage {
+  return { input: ctx.plan.inputTokens, output: ctx.plan.outputCap * ctx.plan.choices, cacheRead: 0, cacheWrite: 0 };
+}
+
 async function settleOnce(ctx: Ctx, ch: LoadedChannel | null, status: number, usage: Usage | null, error?: string, tier: Tier = ctx.tier) {
-  const { cost, upstreamCost } = usage && ch ? chargeFor(usage, ctx.price, ch, tier) : { cost: 0, upstreamCost: 0 };
+  // A successful call whose provider reported no usage cannot be metered. Charge what was held (the
+  // worst case) instead of nothing, and say so in the row: served tokens are never free by accident.
+  const unmetered = usage == null && ch != null && status < 400;
+  let priced = { cost: 0, upstreamCost: 0 };
+  if (unmetered && ch) priced = { cost: ctx.heldAmount, upstreamCost: chargeFor(heldUsage(ctx), ctx.price, ch, tier).upstreamCost };
+  else if (usage && ch) priced = chargeFor(usage, ctx.price, ch, tier);
+  const { cost, upstreamCost } = priced;
+  const detail = unmetered
+    ? `${METERING_UNAVAILABLE}: ${error ?? "the upstream reported no usage"}; charged the held worst case of ${ctx.heldAmount} micro-USD`
+    : error;
   if (usage && ch?.capacityTpm != null) {
     const tokens = usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
     waitUntil(addToWindow(tpmBucket(ch.id), tokens).catch(() => null));
@@ -118,7 +136,7 @@ async function settleOnce(ctx: Ctx, ch: LoadedChannel | null, status: number, us
     cost,
     upstreamCost,
     latencyMs: Date.now() - ctx.started,
-    error,
+    error: detail,
     reservationId: ctx.reservationId,
     serviceTier: usage ? tier : undefined,
   });
@@ -249,7 +267,7 @@ export async function relay(req: Request, protocol: Protocol, opts: RelayOptions
   if (Math.random() < 0.01) waitUntil(runMaintenance(5 * 60_000).catch(() => null));
 
   const rreq: RelayRequest = { protocol, model, stream, body, headers: req.headers, form };
-  const ctx: Ctx = { user, apiKey, price, req: rreq, endpoint: opts.endpoint, started, reservationId: held.id, settled: false, tier };
+  const ctx: Ctx = { user, apiKey, price, req: rreq, endpoint: opts.endpoint, started, reservationId: held.id, plan, heldAmount: held.amount, settled: false, tier };
   try {
     return await forward(ctx, candidates, routing.autoDisableAfter);
   } catch (err) {
@@ -337,9 +355,11 @@ async function forward(ctx: Ctx, candidates: Candidate[], autoDisableAfter: numb
           : json
             ? usageFromBody(target, json)
             : null;
-      // Never fail a successful upstream call because bookkeeping failed; settle() logs and retries.
+      // A call we cannot meter is charged at the held worst case and fails loudly (see settleOnce).
       const tier = billedTier(ctx, ch, target, json?.service_tier);
-      await settle(ctx, ch, res.status, usage, usage ? undefined : "no usage in upstream response", tier);
+      const metered = usage != null;
+      await settle(ctx, ch, res.status, usage, metered ? undefined : "no usage in upstream response", tier);
+      if (!metered) return relayError(protocol, 502, METERING_UNAVAILABLE_MESSAGE, METERING_UNAVAILABLE);
       if (conv) {
         if (!json) throw new Error("upstream returned a non-JSON body for a translated request");
         return Response.json(conv.response(json, model), { status: res.status });
@@ -351,17 +371,27 @@ async function forward(ctx: Ctx, candidates: Candidate[], autoDisableAfter: numb
     // Usage is read from the upstream's own events, before any translation.
     const tracker = new StreamUsageTracker(target);
     const parser = new SSEParser((event, data) => tracker.onEvent(event, data));
+    // Whether this response could be metered is known the moment the upstream stream ends, which is
+    // before the last chunk reaches the client: finalizeStream() fails the call if it could not be.
+    const state = { unmetered: false };
     const tapped = tapStream(
       sse,
       (chunk) => parser.push(chunk),
       async (error) => {
         parser.end();
         const usage = tracker.result();
-        const message = error ? String(error instanceof Error ? error.message : error) : usage ? undefined : "no usage in stream";
-        await settle(ctx, ch, 200, usage, message, billedTier(ctx, ch, target, tracker.serviceTier));
+        const reason = error ? String(error instanceof Error ? error.message : error) : "the upstream stream ended without usage";
+        state.unmetered = usage == null;
+        await settle(ctx, ch, 200, usage, state.unmetered ? reason : undefined, billedTier(ctx, ch, target, tracker.serviceTier));
       },
     );
-    const out = conv ? tapped.pipeThrough(conv.stream(model, ctx.req.body?.stream_options?.include_usage === true)) : tapped;
+    const converted = conv ? tapped.pipeThrough(conv.stream(model, ctx.req.body?.stream_options?.include_usage === true)) : tapped;
+    const out = finalizeStream(
+      converted,
+      () => state.unmetered,
+      () => unmeteredTail(protocol, METERING_UNAVAILABLE_MESSAGE),
+      () => METERING_UNAVAILABLE_MESSAGE,
+    );
     return new Response(out, { status: 200, headers: SSE_HEADERS });
   }
 

@@ -9,6 +9,7 @@ import postgres from "postgres";
 import Stripe from "stripe";
 import * as schema from "../src/db/schema";
 import { encrypt, generateApiKey, sha256 } from "../src/lib/crypto";
+import { DEFAULT_ROUTING } from "../src/lib/settings";
 import { startMockUpstream } from "./mock-upstream";
 
 const BASE = process.env.E2E_BASE_URL ?? "http://localhost:3000";
@@ -54,6 +55,7 @@ await db.insert(schema.modelPrices).values([
   { model: "claude-batch", inputPrice: 3, outputPrice: 15, batchMarkup: 0.8 },
   { model: "claude-batch-big", inputPrice: 15, outputPrice: 75, batchMarkup: 0.8 },
   { model: "ptu-test", inputPrice: 1, outputPrice: 1 },
+  { model: "nomusage-test", inputPrice: 1, outputPrice: 1 },
 ]);
 
 type NewChannel = typeof schema.channels.$inferInsert;
@@ -78,7 +80,9 @@ await db.insert(schema.channels).values([
   channel({ name: "reset", provider: "openai_compatible", source: "reseller", baseUrl: `${MOCK}/reset/v1`, credentials: { apiKey: "x" }, models: ["reset-test"] }),
   channel({ name: "slow", provider: "openai_compatible", source: "reseller", baseUrl: `${MOCK}/slow/v1`, credentials: { apiKey: "x" }, models: ["slow-test"] }),
   channel({ name: "gemini official", provider: "gemini", source: "official", baseUrl: `${MOCK}/gemini`, credentials: { apiKey: "up-gemini" }, models: ["gemini-test"], priority: 5 }),
+  channel({ name: "unmetered", provider: "openai_compatible", source: "cloud", baseUrl: `${MOCK}/nomusage/v1`, credentials: { apiKey: "x" }, models: ["nomusage-test"] }),
 ]);
+
 
 const [user] = await db.insert(schema.users).values({ email: "buyer@example.com", balance: 1_000_000 }).returning();
 const key = generateApiKey();
@@ -102,6 +106,10 @@ const lastLog = async () => (await db.select().from(schema.usageLogs).orderBy(sq
 const balanceOfUser = async () => (await db.select().from(schema.users).where(eq(schema.users.id, user.id)))[0].balance;
 const settings = (value: unknown) =>
   db.insert(schema.settings).values({ key: "routing", value }).onConflictDoUpdate({ target: schema.settings.key, set: { value } });
+
+// A fresh install routes from cloud capacity only (the vendors' own APIs may not be resold). This
+// install opts into every source, the way an admin does after getting the vendors' permission.
+await settings({ ...DEFAULT_ROUTING, enabledSources: [...schema.SOURCES] });
 
 let logs = 0;
 const step = async (name: string, fn: () => Promise<void>) => {
@@ -630,6 +638,35 @@ await step("Batches are refused for models without a batch price", async () => {
   const res = await post("/v1/messages/batches", { requests: [{ custom_id: "x", params: { model: "claude-test", max_tokens: 5, messages: [] } }] }, { "x-api-key": key });
   assert.equal(res.status, 400);
   assert.match((await res.json()).error.message, /not offered/);
+});
+
+await step("A successful response with no usage is charged the held worst case and fails loudly", async () => {
+  const before = await balanceOfUser();
+  const res = await post("/v1/chat/completions", { model: "nomusage-test", messages: [{ role: "user", content: "hi" }] });
+  assert.equal(res.status, 502, await res.clone().text());
+  assert.equal((await res.json()).error.code, "metering_unavailable");
+  await logsSettled(++logs);
+  const log = await lastLog();
+  assert.match(log.error ?? "", /metering_unavailable/);
+  assert.ok(log.cost > 0, "an unmetered request must never be free");
+  assert.equal(before - (await balanceOfUser()), log.cost);
+});
+
+await step("A stream that never reports usage errors the stream and is still charged", async () => {
+  const before = await balanceOfUser();
+  const res = await post("/v1/chat/completions", { model: "nomusage-test", stream: true, messages: [] });
+  let text: string;
+  try {
+    text = await res.text();
+  } catch (err) {
+    text = `stream aborted: ${err}`;
+  }
+  assert.match(text, /metering_unavailable|stream aborted/, text);
+  await logsSettled(++logs);
+  const log = await lastLog();
+  assert.match(log.error ?? "", /metering_unavailable/);
+  assert.ok(log.cost > 0, "an unmetered stream must never be free");
+  assert.equal(before - (await balanceOfUser()), log.cost);
 });
 
 // ---------- Stripe webhooks ----------

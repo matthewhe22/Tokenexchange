@@ -147,6 +147,9 @@ npx tsx scripts/e2e.ts          # end-to-end against mock upstreams (truncates e
    - `checkout.session.completed`
    - `checkout.session.async_payment_succeeded`
    - `charge.refunded`
+   - `charge.dispute.created` (a chargeback takes the credit back, which may leave a negative balance, and disables
+     the account for review)
+   - `charge.dispute.closed` (a won dispute restores the credit; the account stays disabled until an admin enables it)
 
    Put its signing secret in `STRIPE_WEBHOOK_SECRET`.
 6. Sign in at `/login` with the admin account (you will land on `/admin`) and set things up:

@@ -191,7 +191,7 @@ export const balanceTransactions = pgTable("balance_transactions", {
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
   amount: bigint("amount", { mode: "number" }).notNull(),
-  type: text("type", { enum: ["topup", "adjust", "refund", "redeem"] }).notNull(),
+  type: text("type", { enum: ["topup", "adjust", "refund", "redeem", "dispute"] }).notNull(),
   // e.g. Stripe checkout session id; unique so payment webhooks are idempotent
   reference: text("reference").unique(),
   note: text("note"),

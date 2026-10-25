@@ -1,6 +1,7 @@
 import { eq, like, sql } from "drizzle-orm";
 import Stripe from "stripe";
 import { getDb, schema } from "@/db";
+import { audit } from "./audit";
 import { applyBalanceChange } from "./ledger";
 import { appUrl } from "./url";
 
@@ -58,6 +59,20 @@ export async function createTopupCheckout(user: User, amountUsd: number): Promis
   return session.url;
 }
 
+/** Audit-log actor for changes made by Stripe webhooks. */
+const STRIPE_ACTOR = { id: 0, email: "stripe-webhook" };
+
+const chargeId = (c: string | Stripe.Charge) => (typeof c === "string" ? c : c.id);
+
+/** The user who paid a charge, looked up by the charge's Stripe customer. */
+async function userForCharge(charge: string | Stripe.Charge): Promise<User | null> {
+  const c = typeof charge === "string" ? await getStripe().charges.retrieve(charge) : charge;
+  const customer = typeof c.customer === "string" ? c.customer : c.customer?.id;
+  if (!customer) return null;
+  const [user] = await getDb().select().from(schema.users).where(eq(schema.users.stripeCustomerId, customer));
+  return user ?? null;
+}
+
 /** Applies a verified Stripe webhook event to user balances. Safe to call repeatedly with the same event. */
 export async function handleStripeEvent(event: Stripe.Event): Promise<string> {
   switch (event.type) {
@@ -101,6 +116,50 @@ export async function handleStripeEvent(event: Stripe.Event): Promise<string> {
         note: `Stripe refund on ${charge.id}`,
       });
       return `debited user ${user.id}`;
+    }
+    case "charge.dispute.created": {
+      // A chargeback: the money is gone (plus Stripe's dispute fee). Take the credit back, which
+      // may leave a negative balance if it was already spent, and lock the account for review.
+      const dispute = event.data.object;
+      const user = await userForCharge(dispute.charge);
+      if (!user) return `ignored: dispute ${dispute.id} on a charge with no known customer`;
+      const applied = await applyBalanceChange({
+        userId: user.id,
+        amount: -dispute.amount * MICROS_PER_CENT,
+        type: "dispute",
+        reference: `stripe-dispute:${dispute.id}`,
+        note: `Stripe dispute ${dispute.id} (${dispute.reason}) on ${chargeId(dispute.charge)}`,
+      });
+      if (!applied) return `duplicate: ${dispute.id}`;
+      // Disabling blocks the console and every API key; bumping the session version signs the user out.
+      await getDb()
+        .update(schema.users)
+        .set({ disabled: true, sessionVersion: sql`${schema.users.sessionVersion} + 1` })
+        .where(eq(schema.users.id, user.id));
+      await audit(STRIPE_ACTOR, "stripe.dispute_opened", `user:${user.id}`, {
+        dispute: dispute.id,
+        charge: chargeId(dispute.charge),
+        amountCents: dispute.amount,
+        reason: dispute.reason,
+      });
+      return `debited and disabled user ${user.id}`;
+    }
+    case "charge.dispute.closed": {
+      // Won: the funds come back, so restore the credit. The account stays disabled until an admin
+      // re-enables it.
+      const dispute = event.data.object;
+      if (dispute.status !== "won") return `dispute ${dispute.id} closed: ${dispute.status}`;
+      const user = await userForCharge(dispute.charge);
+      if (!user) return `ignored: dispute ${dispute.id} on a charge with no known customer`;
+      const applied = await applyBalanceChange({
+        userId: user.id,
+        amount: dispute.amount * MICROS_PER_CENT,
+        type: "dispute",
+        reference: `stripe-dispute-won:${dispute.id}`,
+        note: `Stripe dispute ${dispute.id} won`,
+      });
+      if (applied) await audit(STRIPE_ACTOR, "stripe.dispute_won", `user:${user.id}`, { dispute: dispute.id, amountCents: dispute.amount });
+      return applied ? `re-credited user ${user.id}` : `duplicate: ${dispute.id}`;
     }
     default:
       return `ignored: ${event.type}`;

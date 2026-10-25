@@ -784,6 +784,32 @@ await step("Refunds debit incrementally and idempotently", async () => {
   assert.equal(await balanceOf(), before - 15_000_000);
 });
 
+await step("A chargeback debits the credit, disables the account and blocks its keys, exactly once", async () => {
+  const before = await balanceOf();
+  const dispute = { id: "dp_e2e", object: "dispute", charge: "ch_e2e", amount: 2000, currency: "usd", reason: "fraudulent", status: "needs_response" };
+  assert.equal((await sendEvent("charge.dispute.created", dispute)).status, 200);
+  assert.equal((await sendEvent("charge.dispute.created", dispute)).status, 200);
+  const [u] = await db.select().from(schema.users).where(eq(schema.users.id, user.id));
+  assert.equal(u.balance, before - 20_000_000);
+  assert.equal(u.disabled, true);
+  const res = await post("/v1/chat/completions", { model: "gpt-test", messages: [{ role: "user", content: "hi" }] });
+  assert.equal(res.status, 403);
+  const [entry] = await db.select().from(schema.auditLogs).where(eq(schema.auditLogs.action, "stripe.dispute_opened"));
+  assert.equal(entry.target, `user:${user.id}`);
+  // A dispute on a charge with no customer is ignored.
+  assert.equal((await sendEvent("charge.dispute.created", { ...dispute, id: "dp_orphan", charge: "ch_orphan" })).status, 200);
+});
+
+await step("A won dispute restores the credit once; a lost one changes nothing; the account stays locked", async () => {
+  const before = await balanceOf();
+  await sendEvent("charge.dispute.closed", { id: "dp_e2e", object: "dispute", charge: "ch_e2e", amount: 2000, reason: "fraudulent", status: "won" });
+  await sendEvent("charge.dispute.closed", { id: "dp_e2e", object: "dispute", charge: "ch_e2e", amount: 2000, reason: "fraudulent", status: "won" });
+  assert.equal(await balanceOf(), before + 20_000_000);
+  await sendEvent("charge.dispute.closed", { id: "dp_lost", object: "dispute", charge: "ch_e2e", amount: 500, reason: "fraudulent", status: "lost" });
+  assert.equal(await balanceOf(), before + 20_000_000);
+  assert.equal((await db.select().from(schema.users).where(eq(schema.users.id, user.id)))[0].disabled, true);
+});
+
 console.log("\nall e2e checks passed");
 mock.close();
 await client.end();

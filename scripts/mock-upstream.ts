@@ -58,6 +58,8 @@ export function startMockUpstream(port: number): Promise<{ received: Received[];
 
     // Stripe API (the gateway's SDK is pointed here via STRIPE_API_BASE)
     if (path === "/v1/customers") return json(200, { id: "cus_mock", object: "customer" });
+    const charge = path.match(/^\/v1\/charges\/([^/]+)$/);
+    if (charge) return json(200, { id: charge[1], object: "charge", customer: charge[1] === "ch_orphan" ? null : "cus_e2e", amount: 2500 });
     if (path === "/v1/checkout/sessions") {
       return json(200, { id: "cs_mock", object: "checkout.session", url: `http://localhost:${port}/checkout/cs_mock` });
     }

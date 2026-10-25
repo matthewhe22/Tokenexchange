@@ -1,4 +1,4 @@
-export const metadata = { title: "Privacy Policy · TokenExchange" };
+export const metadata = { title: "Privacy Policy" };
 
 // TEMPLATE: have qualified counsel review and adapt before launch (GDPR/CCPA specifics, contact details).
 export default function PrivacyPage() {

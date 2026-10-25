@@ -63,7 +63,7 @@ async function checkoutUrl(stripe: Stripe, user: User, customer: string, cents: 
     line_items: [
       {
         quantity: 1,
-        price_data: { currency: "usd", unit_amount: cents, product_data: { name: "TokenExchange API credit" } },
+        price_data: { currency: "usd", unit_amount: cents, product_data: { name: "Tenon API credit" } },
       },
     ],
     success_url: `${appUrl()}/dashboard/billing?status=success`,

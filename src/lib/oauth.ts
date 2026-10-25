@@ -81,7 +81,7 @@ export async function verifiedEmailFromCode(p: OAuthProvider, code: string): Pro
 
   if (p === "github") {
     const res = await fetch("https://api.github.com/user/emails", {
-      headers: { authorization: `Bearer ${access_token}`, accept: "application/vnd.github+json", "user-agent": "TokenExchange" },
+      headers: { authorization: `Bearer ${access_token}`, accept: "application/vnd.github+json", "user-agent": "Tenon" },
       signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) return null;

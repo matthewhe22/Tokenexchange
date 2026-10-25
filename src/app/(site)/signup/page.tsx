@@ -3,7 +3,7 @@ import { OAuthButtons, SignupForm } from "@/components/auth-forms";
 import { enabledOAuthProviders } from "@/lib/oauth";
 import { turnstileSiteKey } from "@/lib/turnstile";
 
-export const metadata = { title: "Create account · TokenExchange" };
+export const metadata = { title: "Create account" };
 
 export default async function SignupPage() {
   const t = await getDict();

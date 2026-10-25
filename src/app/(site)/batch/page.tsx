@@ -6,7 +6,7 @@ import { getDict } from "@/lib/i18n";
 import { batchSnippets } from "@/lib/snippets";
 
 export const metadata: Metadata = {
-  title: "Batch API · TokenExchange",
+  title: "Batch API",
   description: "Run GPT, Claude and open-model requests as batches with the OpenAI and Anthropic SDKs, at discounted batch rates.",
 };
 

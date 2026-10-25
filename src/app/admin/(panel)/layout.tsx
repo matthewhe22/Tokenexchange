@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { TenonLogo } from "@/components/logo";
 import { requireAdmin } from "@/lib/session";
 import { logout } from "@/app/(site)/auth-actions";
 import { formatDateTime, tzLabel } from "@/lib/time";
@@ -10,7 +11,7 @@ export default async function PanelLayout({ children }: { children: React.ReactN
   return (
     <div className="shell">
       <nav className="nav">
-        <Link href="/admin" className="brand">TokenExchange</Link>
+        <Link href="/admin" className="brand"><TenonLogo size={26} /></Link>
         <Link href="/admin">Dashboard</Link>
         <Link href="/admin/channels">Channels</Link>
         <Link href="/admin/capacity">Capacity</Link>

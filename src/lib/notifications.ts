@@ -20,7 +20,7 @@ export async function maybeNotifyLowBalance(userId: number, balance: number, thr
   if (!claimed) return;
   await sendEmail({
     to: claimed.email,
-    subject: `Your TokenExchange balance is below ${formatUsd(limit)}`,
+    subject: `Your Tenon balance is below ${formatUsd(limit)}`,
     text: `Your balance is now ${formatUsd(Math.max(0, balance))}. Requests will be refused when it runs out.\n\nAdd credit: ${appUrl()}/dashboard/billing\n\nChange or turn off this alert: ${appUrl()}/dashboard/account`,
   });
 }

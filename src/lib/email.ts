@@ -14,7 +14,7 @@ export async function sendEmail(msg: { to: string; subject: string; text: string
     method: "POST",
     headers: { authorization: `Bearer ${process.env.RESEND_API_KEY}`, "content-type": "application/json" },
     body: JSON.stringify({
-      from: process.env.EMAIL_FROM ?? "TokenExchange <onboarding@resend.dev>",
+      from: process.env.EMAIL_FROM ?? "Tenon <onboarding@resend.dev>",
       to: [msg.to],
       subject: msg.subject,
       text: msg.text,

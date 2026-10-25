@@ -2,7 +2,7 @@ import Link from "next/link";
 import { batchDeals, maxBatchSaving, perMillion, publicPriceList, type Vendor } from "@/lib/catalog";
 import { getDict } from "@/lib/i18n";
 
-export const metadata = { title: "Pricing · TokenExchange" };
+export const metadata = { title: "Pricing" };
 
 export default async function PricingPage() {
   const [prices, t] = await Promise.all([publicPriceList(), getDict()]);

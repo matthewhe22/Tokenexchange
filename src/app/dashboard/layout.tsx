@@ -1,5 +1,6 @@
 import { getDict } from "@/lib/i18n";
 import Link from "next/link";
+import { TenonLogo } from "@/components/logo";
 import { logout } from "@/app/(site)/auth-actions";
 import { requireUser } from "@/lib/session";
 
@@ -11,7 +12,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
   return (
     <div className="shell">
       <nav className="nav">
-        <Link href="/" className="brand">TokenExchange</Link>
+        <Link href="/" className="brand"><TenonLogo size={26} /></Link>
         <Link href="/dashboard">{t["dash.overview"]}</Link>
         <Link href="/dashboard/keys">{t["dash.keys"]}</Link>
         <Link href="/dashboard/playground">{t["dash.playground"]}</Link>

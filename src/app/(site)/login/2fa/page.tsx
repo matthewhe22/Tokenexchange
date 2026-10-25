@@ -3,7 +3,7 @@ import Link from "next/link";
 import { TwoFactorForm } from "@/components/auth-forms";
 import { readPendingTwoFactor } from "@/lib/session";
 
-export const metadata = { title: "Two-factor authentication · TokenExchange" };
+export const metadata = { title: "Two-factor authentication" };
 
 export default async function TwoFactorPage({ searchParams }: { searchParams: Promise<{ next?: string }> }) {
   const { next } = await searchParams;

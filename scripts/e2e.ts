@@ -53,6 +53,7 @@ await db.insert(schema.modelPrices).values([
   { model: "gpt-batch", inputPrice: 2, outputPrice: 8, batchMarkup: 0.8 },
   { model: "claude-batch", inputPrice: 3, outputPrice: 15, batchMarkup: 0.8 },
   { model: "claude-batch-big", inputPrice: 15, outputPrice: 75, batchMarkup: 0.8 },
+  { model: "relay-batch", inputPrice: 2, outputPrice: 8, batchMarkup: 0.9 },
   { model: "ptu-test", inputPrice: 1, outputPrice: 1 },
 ]);
 
@@ -67,6 +68,8 @@ await db.insert(schema.channels).values([
   channel({ name: "openai official", provider: "openai", source: "official", baseUrl: `${MOCK}/openai/v1`, credentials: { apiKey: "up-openai" }, models: ["gpt-test", "embed-test", "tier-test", "dalle-test", "tts-test", "whisper-test", "flex-test", "gpt-batch", "ptu-test"], modelMapping: { "gpt-test": "gpt-upstream", "whisper-test": "whisper-upstream", "gpt-batch": "gpt-4o-batch-up" }, costMultiplier: 0.9 }),
   // committed capacity that is always full: traffic spills to the pay-as-you-go channel above
   channel({ name: "ptu", provider: "azure_openai", source: "cloud", baseUrl: `${MOCK}/ptu/v1`, credentials: { apiKey: "up-azure" }, models: ["ptu-test"], priority: 10, fixedCostHourly: 1, capacityTpm: 1000 }),
+  // a DeepInfra-style relay: batches on, its own batch price (80% of list), an org header
+  channel({ name: "batch relay", provider: "openai_compatible", source: "reseller", baseUrl: `${MOCK}/openai/v1`, config: { batch: "on", batchCostFactor: "0.8", extraHeaders: "X-Organization-ID: org_e2e" }, credentials: { apiKey: "up-openai" }, models: ["relay-batch"], modelMapping: { "relay-batch": "gpt-4o-batch-up" } }),
   channel({ name: "anthropic official", provider: "anthropic", source: "official", baseUrl: `${MOCK}/anthropic`, credentials: { apiKey: "up-anthropic" }, models: ["claude-batch", "claude-batch-big"], modelMapping: { "claude-batch": "claude-up", "claude-batch-big": "claude-up-big" } }),
   channel({ name: "reranker", provider: "openai_compatible", source: "reseller", baseUrl: `${MOCK}/openai/v1`, credentials: { apiKey: "up-openai" }, models: ["rerank-test"] }),
   channel({ name: "creditless", provider: "anthropic_compatible", source: "reseller", baseUrl: `${MOCK}/creditless`, credentials: { apiKey: "x" }, models: ["fault-test"], priority: 9 }),
@@ -555,6 +558,36 @@ await step("OpenAI batch: upload, create (hold), poll (bill at batch price), dow
 
   res = await post("/v1/batches", { input_file_id: file.id, endpoint: "/v1/embeddings" });
   assert.equal(res.status, 400, "lines must match the batch endpoint");
+});
+
+await step("Relay batch (DeepInfra-style): extra header sent, billed at the relay's own batch price", async () => {
+  const line = (id: string) => JSON.stringify({ custom_id: id, method: "POST", url: "/v1/chat/completions", body: { model: "relay-batch", messages: [{ role: "user", content: "hi" }] } });
+  const form = new FormData();
+  form.set("purpose", "batch");
+  form.set("file", new Blob([[line("a"), line("b")].join("\n")]), "in.jsonl");
+  const file = await (await fetch(`${BASE}/v1/files`, { method: "POST", headers: { authorization: `Bearer ${key}` }, body: form })).json();
+  const before = await balanceOfUser();
+  let res = await post("/v1/batches", { input_file_id: file.id, endpoint: "/v1/chat/completions" });
+  assert.equal(res.status, 200, await res.clone().text());
+  const { id } = await res.json();
+  assert.equal(lastUpstream("/openai/v1/files").headers["x-organization-id"], "org_e2e");
+  assert.equal(lastUpstream("/openai/v1/batches").headers["x-organization-id"], "org_e2e");
+  res = await fetch(`${BASE}/v1/batches/${id}`, { headers: { authorization: `Bearer ${key}` } });
+  assert.equal((await res.json()).status, "completed");
+  logs++;
+  const log = await lastLog();
+  // 2 x (100 in, 10 out) = 560 list: customer 0.9 -> 504, upstream 0.8 -> 448
+  assert.equal(log.cost, 504);
+  assert.equal(log.upstreamCost, 448);
+  assert.equal(await balanceOfUser(), before - 504);
+});
+
+// Real-time requests on the relay carry the header too.
+await step("Relay channels send their extra headers on live requests", async () => {
+  const res = await post("/v1/chat/completions", { model: "relay-batch", messages: [{ role: "user", content: "hi" }] });
+  assert.equal(res.status, 200);
+  await logsSettled(++logs);
+  assert.equal(lastUpstream("/openai/v1/chat").headers["x-organization-id"], "org_e2e");
 });
 
 await step("Anthropic message batch: create, poll, bill, results, delete", async () => {

@@ -4,6 +4,7 @@ import { getAccessToken, parseServiceAccount } from "./google-auth";
 import { supportsModel } from "./info";
 
 export { PROVIDER_INFO, supports, supportsModel } from "./info";
+import { parseExtraHeaders } from "./info";
 
 const trim = (url: string) => url.replace(/\/+$/, "");
 
@@ -46,14 +47,14 @@ export function openaiEndpoint(ch: Pick<ChannelRuntime, "provider" | "baseUrl" |
     headers.authorization = `Bearer ${need(ch.credentials.apiKey, "apiKey")}`;
   }
   const query = ch.provider === "azure_openai" && ch.config.apiVersion ? `?api-version=${encodeURIComponent(ch.config.apiVersion)}` : "";
-  return { base: trim(base), headers, query };
+  return { base: trim(base), headers: { ...parseExtraHeaders(ch.config.extraHeaders), ...headers }, query };
 }
 
 /** API root (without /v1) and auth headers for an Anthropic-style channel. */
-export function anthropicEndpoint(ch: Pick<ChannelRuntime, "provider" | "baseUrl" | "credentials">, version = "2023-06-01") {
+export function anthropicEndpoint(ch: Pick<ChannelRuntime, "provider" | "baseUrl" | "config" | "credentials">, version = "2023-06-01") {
   const root = ch.provider === "anthropic" ? (ch.baseUrl ?? "https://api.anthropic.com") : need(ch.baseUrl, "base URL");
   const key = need(ch.credentials.apiKey, "apiKey");
-  const headers: Record<string, string> = { "anthropic-version": version, "x-api-key": key };
+  const headers: Record<string, string> = { ...parseExtraHeaders(ch.config.extraHeaders), "anthropic-version": version, "x-api-key": key };
   // Many relays only accept bearer auth.
   if (ch.provider === "anthropic_compatible") headers.authorization = `Bearer ${key}`;
   return { root: trim(root).replace(/\/v1$/, ""), headers };

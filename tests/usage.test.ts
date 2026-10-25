@@ -74,6 +74,22 @@ describe("chargeFor", () => {
   });
 });
 
+describe("relay channel settings", async () => {
+  const { parseExtraHeaders } = await import("@/relay/providers/info");
+  it("parses extra headers and drops invalid lines", () => {
+    expect(parseExtraHeaders("X-Organization-ID: org_1\nbad line\n: novalue\nX-Empty:\nX-Two: a: b")).toEqual({ "X-Organization-ID": "org_1", "X-Two": "a: b" });
+    expect(parseExtraHeaders(undefined)).toEqual({});
+  });
+  it("bills a relay's own batch price when set (DeepInfra: 80% of list)", () => {
+    const price = { model: "m", inputPrice: 1, outputPrice: 0, cacheReadPrice: null, cacheWritePrice: null, markup: 1, maxOutputTokens: null, tierThreshold: null, tierInputPrice: null, tierOutputPrice: null, perRequestPrice: null, flexMarkup: null, batchMarkup: 0.9, priorityMultiplier: null, enabled: true, updatedAt: new Date() };
+    const u = { input: 1000, output: 0, cacheRead: 0, cacheWrite: 0 };
+    expect(chargeFor(u, price, { costMultiplier: 1, config: { batchCostFactor: "0.8" } }, "batch")).toEqual({ cost: 900, upstreamCost: 800 });
+    expect(chargeFor(u, price, { costMultiplier: 1, config: {} }, "batch")).toEqual({ cost: 900, upstreamCost: 500 });
+    // the override only applies to batches
+    expect(chargeFor(u, price, { costMultiplier: 1, config: { batchCostFactor: "0.8" } }).upstreamCost).toBe(1000);
+  });
+});
+
 describe("service_tier handling", async () => {
   const { applyRequestedTier } = await import("@/lib/tiers");
   const price = { model: "m", inputPrice: 3, outputPrice: 15, cacheReadPrice: null, cacheWritePrice: null, markup: 1, maxOutputTokens: null, tierThreshold: null, tierInputPrice: null, tierOutputPrice: null, perRequestPrice: null, flexMarkup: null, batchMarkup: null, priorityMultiplier: null, enabled: true, updatedAt: new Date() };

@@ -58,13 +58,21 @@ export interface ChannelCost {
   /** Committed-capacity channels have no marginal cost per request while the commitment runs. */
   fixedCostHourly?: number | null;
   commitmentEndsAt?: Date | null;
+  /** Non-secret provider settings; `batchCostFactor` overrides what the upstream charges for batches. */
+  config?: Record<string, string>;
+}
+
+/** Upstream price of `tier` as a multiple of list on this channel (before its cost multiplier). */
+export function upstreamListFactor(f: { list: number }, tier: Tier, channel: ChannelCost): number {
+  const override = Number(channel.config?.batchCostFactor);
+  return tier === "batch" && channel.config?.batchCostFactor && Number.isFinite(override) && override > 0 ? override : f.list;
 }
 
 export function chargeFor(usage: Usage, price: ModelPrice, channel: ChannelCost, tier: Tier = "standard") {
   const list = listCost(usage, price);
   const f = tierFactors(price, tier) ?? tierFactors(price, "standard")!;
   const committed = channel.fixedCostHourly != null && (channel.commitmentEndsAt == null || channel.commitmentEndsAt > new Date());
-  const upstreamCost = committed ? 0 : Math.round(list * f.list * channel.costMultiplier);
+  const upstreamCost = committed ? 0 : Math.round(list * upstreamListFactor(f, tier, channel) * channel.costMultiplier);
   return { cost: Math.ceil(list * f.sell), upstreamCost };
 }
 

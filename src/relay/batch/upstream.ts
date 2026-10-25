@@ -46,9 +46,16 @@ const json = (headers: Record<string, string>, body: Json): RequestInit => ({
   body: JSON.stringify(body),
 });
 
-/** Providers whose batch API this gateway can drive. Bedrock and Vertex batches need S3 / GCS buckets. */
-export function batchCapable(ch: Pick<LoadedChannel, "provider">, api: "openai" | "anthropic"): boolean {
-  return api === "openai" ? ch.provider === "openai" || ch.provider === "azure_openai" : ch.provider === "anthropic";
+/**
+ * Channels whose batch API this gateway can drive: the official OpenAI, Azure and Anthropic APIs,
+ * and relays (DeepInfra, Novita, …) with batches switched on. Bedrock and Vertex batches need
+ * S3 / GCS buckets and are not supported.
+ */
+export function batchCapable(ch: Pick<LoadedChannel, "provider" | "config">, api: "openai" | "anthropic"): boolean {
+  const relayOn = ch.config.batch === "on";
+  return api === "openai"
+    ? ch.provider === "openai" || ch.provider === "azure_openai" || (ch.provider === "openai_compatible" && relayOn)
+    : ch.provider === "anthropic" || (ch.provider === "anthropic_compatible" && relayOn);
 }
 
 /** One request of a batch, already rewritten for the upstream (model = upstream id). */

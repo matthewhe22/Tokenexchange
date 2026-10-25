@@ -39,6 +39,9 @@ const CONFIG_LABELS: Record<string, string> = {
   region: "AWS region",
   projectId: "GCP project ID (defaults to the service account's)",
   location: "Location (default: global)",
+  extraHeaders: "Extra request headers, one \"Name: value\" per line (not for secrets)",
+  batch: "Batch API",
+  batchCostFactor: "Upstream batch price ÷ list (default 0.5; DeepInfra 0.8)",
 };
 
 export function ChannelForm({ value, action }: { value: ChannelFormValue; action: (form: FormData) => Promise<void> }) {
@@ -76,9 +79,18 @@ export function ChannelForm({ value, action }: { value: ChannelFormValue; action
         </div>
 
         {info.configFields.map((k) => (
-          <div key={k}>
+          <div key={k} className={k === "extraHeaders" ? "wide" : undefined}>
             <label>{CONFIG_LABELS[k] ?? k}</label>
-            <input name={`config.${k}`} defaultValue={value.config[k] ?? ""} />
+            {k === "extraHeaders" ? (
+              <textarea name={`config.${k}`} defaultValue={value.config[k] ?? ""} placeholder="X-Organization-ID: org_123" />
+            ) : k === "batch" ? (
+              <select name={`config.${k}`} defaultValue={value.config[k] ?? ""}>
+                <option value="">Off</option>
+                <option value="on">On — the relay supports /files + /batches (DeepInfra, Novita)</option>
+              </select>
+            ) : (
+              <input name={`config.${k}`} defaultValue={value.config[k] ?? ""} placeholder={k === "batchCostFactor" ? "0.5" : undefined} />
+            )}
           </div>
         ))}
 

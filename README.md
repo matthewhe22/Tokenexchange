@@ -56,7 +56,7 @@ Streaming and non-streaming are both supported, and both are billed from the ups
 |---|---|---|
 | **official** | OpenAI, Anthropic, Gemini API | each vendor's own protocol |
 | **cloud** | Azure OpenAI, AWS Bedrock (Claude), Google Vertex AI (Claude + Gemini) | OpenAI / Anthropic / Gemini |
-| **reseller** | Any OpenAI-compatible or Anthropic-compatible relay | OpenAI / Anthropic |
+| **reseller** | Any OpenAI-compatible or Anthropic-compatible relay (e.g. DeepInfra, Novita, GMI Cloud); extra request headers such as GMI's `X-Organization-ID` can be set per channel | OpenAI / Anthropic |
 
 How routing works:
 - A model must have a row in **Models & prices**. Only channels whose model list includes it are considered.
@@ -70,7 +70,9 @@ Billing: customer price = list price × model `markup`; upstream cost = list pri
 - **`service_tier`**: OpenAI's `flex` and `priority` are only passed upstream when the model has a flex / priority price
   (and only to official OpenAI channels); otherwise the field is removed. Requests are billed at the tier the upstream
   reports. Anthropic's `service_tier` is always removed.
-- **Batches** run on OpenAI, Azure OpenAI and Anthropic channels at half of list, and are billed at the model's batch
+- **Batches** run on OpenAI, Azure OpenAI and Anthropic channels, and on OpenAI-compatible relays with
+  "Batch API: On" (DeepInfra, Novita). The upstream is assumed to charge half of list; set a channel's
+  "Upstream batch price ÷ list" when it differs (DeepInfra: 0.8). Batches are and are billed at the model's batch
   markup (e.g. 0.8 = list − 20%). Each batch is held against the balance for up to 48 hours. It is refreshed whenever
   the customer polls it and by the maintenance job, and billed once it ends. Bedrock / Vertex / Gemini batches (which
   need S3 / GCS) are not supported. Uploaded input files are kept for 30 days.

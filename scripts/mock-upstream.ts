@@ -86,6 +86,18 @@ export function startMockUpstream(port: number): Promise<{ received: Received[];
 
     if (path === "/broken/v1/chat/completions") return json(500, { error: { message: "boom" } });
 
+    // Upstream price catalogs: DeepInfra's public list (at the API root) and Novita's /models.
+    if (path === "/models/list") {
+      return json(200, [
+        { model_name: "meta-llama/Llama-3.3-70B-Instruct-Turbo", type: "text-generation", max_tokens: 131072, pricing: { cents_per_input_token: 0.00001, cents_per_output_token: 0.000032 } },
+        { model_name: "BAAI/bge-m3", type: "embeddings", pricing: { cents_per_input_token: 0.000001 } },
+      ]);
+    }
+    if (path === "/novita/openai/v1/models") {
+      if (req.headers.authorization !== "Bearer up-novita") return json(401, { error: { message: "bad key" } });
+      return json(200, { data: [{ id: "meta-llama/llama-3.3-70b-instruct", input_token_price_per_m: 1350, output_token_price_per_m: 4000, context_size: 131072 }] });
+    }
+
     if (path === "/ptu/v1/chat/completions") return json(429, { error: { message: "Requests to the deployment have exceeded its provisioned capacity" } });
 
     // Answers successfully but never reports usage: the gateway must charge the held worst case and

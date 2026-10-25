@@ -82,6 +82,13 @@ the caller is told: a non-streamed request gets a 502 with `code: "metering_unav
 streamed one gets the protocol's error event followed by an aborted stream. Fix the channel (or turn
 it off) rather than letting it serve traffic for free.
 
+- **Per-token upstreams (DeepInfra, Novita, GMI)**: on the Channels page, start from a preset. On the channel page,
+  pick models from the provider's live price list. The import adds each model with the provider's own cost and creates
+  a customer price at that cost × markup where none exists. Use one public name across providers, give the cheapest
+  provider the highest priority, and use "Refresh costs from catalog" when prices change. A channel's per-model cost
+  overrides its cost multiplier, so margins stay right when providers price models differently. Batches go to the
+  provider with the cheapest batch price. These channels use the `reseller` source, which is off until you enable it
+  under Routing; DeepInfra's terms forbid resale without a written agreement.
 - **`service_tier`**: OpenAI's `flex` and `priority` are only passed upstream when the model has a flex / priority price
   (and only to official OpenAI channels); otherwise the field is removed. Requests are billed at the tier the upstream
   reports. Anthropic's `service_tier` is always removed.

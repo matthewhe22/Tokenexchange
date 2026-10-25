@@ -188,12 +188,20 @@ export async function createBatch(c: CreateBatch): Promise<BatchRow | Response> 
 
   // One upstream batch runs on one channel, so the channel must serve every model in it.
   const [channels, routing] = await Promise.all([getActiveChannels(), getRoutingSettings()]);
+  // Batches are not latency-sensitive: the channel with the cheapest batch price goes first
+  // (e.g. Novita at 50% before DeepInfra at 80%); priority order breaks ties.
+  const usage = { input: 3_000_000, output: 1_000_000, cacheRead: 0, cacheWrite: 0 };
+  const batchCost = (ch: LoadedChannel) => models.reduce((s, m) => s + chargeFor(usage, prices.get(m)!, ch, "batch").upstreamCost, 0);
   const candidates = orderChannels(
     channels.filter((ch) => batchCapable(ch, c.api)),
     models[0],
     c.protocol,
     routing,
-  ).filter((ch) => models.every((m) => orderChannels([ch], m, c.protocol, routing).length));
+  )
+    .filter((ch) => models.every((m) => orderChannels([ch], m, c.protocol, routing).length))
+    .map((ch, i) => ({ ch, i, cost: batchCost(ch) }))
+    .sort((a, b) => a.cost - b.cost || a.i - b.i)
+    .map((x) => x.ch);
   if (!candidates.length) return relayError(ep, 503, `no upstream channel can run batches for ${models.join(", ")}`);
 
   const held = await reserve(user.id, apiKey.id, { inputTokens: 0, outputCap: 0, choices: 1, cost: () => total }, new Date(Date.now() + HOLD_MS));

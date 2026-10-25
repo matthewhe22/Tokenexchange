@@ -1,0 +1,1 @@
+ALTER TABLE "channels" ADD COLUMN "model_costs" jsonb DEFAULT '{}'::jsonb NOT NULL;

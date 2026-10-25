@@ -5,7 +5,7 @@ import { eq, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getDb, schema } from "@/db";
-import { PROVIDERS, SOURCES, type Provider, type Source } from "@/db/schema";
+import { PROVIDERS, SOURCES, type ModelCost, type Provider, type Source } from "@/db/schema";
 import { invalidate } from "@/lib/cache";
 import { testChannel } from "@/lib/channel-test";
 import { invalidateChannels } from "@/lib/channels";
@@ -19,6 +19,7 @@ import { saveLimitSettings, saveRoutingSettings, saveSecuritySettings } from "@/
 import { PROVIDER_INFO } from "@/relay/providers/info";
 import { rearmLowBalanceSql } from "@/lib/notifications";
 import { zonedMidnight } from "@/lib/time";
+import { fetchCatalog, suggestPublicName } from "@/lib/upstream-catalog";
 
 const str = (f: FormData, k: string) => String(f.get(k) ?? "").trim();
 const num = (f: FormData, k: string, d: number) => {
@@ -41,6 +42,19 @@ function redactUrl(raw: string): string {
   } catch {
     return "(unparseable URL)";
   }
+}
+
+/** "model=input/output[/cached]" lines (USD per 1M tokens) to a channel's per-model costs. */
+function parseModelCosts(raw: string): Record<string, ModelCost> {
+  const out: Record<string, ModelCost> = {};
+  for (const line of raw.split("\n")) {
+    const [model, prices] = line.split("=").map((s) => s?.trim());
+    if (!model || !prices) continue;
+    const [input, output, cacheRead] = prices.split("/").map((p) => Number(p.trim()));
+    if (!Number.isFinite(input) || !Number.isFinite(output) || input < 0 || output < 0) continue;
+    out[model] = Number.isFinite(cacheRead) && cacheRead >= 0 ? { input, output, cacheRead } : { input, output };
+  }
+  return out;
 }
 
 function parseLocalDate(v: string): Date | null {
@@ -93,6 +107,7 @@ export async function saveChannel(form: FormData) {
     priority: num(form, "priority", 0),
     weight: Math.max(1, num(form, "weight", 1)),
     costMultiplier: num(form, "costMultiplier", 1),
+    modelCosts: parseModelCosts(str(form, "modelCosts")),
     fixedCostHourly: str(form, "fixedCostHourly") === "" ? null : Math.max(0, num(form, "fixedCostHourly", 0)),
     capacityTpm: str(form, "capacityTpm") === "" ? null : Math.max(1, Math.floor(num(form, "capacityTpm", 1))),
     // Entered as a Melbourne (app time zone) calendar date: the commitment ends at local midnight.
@@ -378,4 +393,96 @@ export async function createRedeemCodes(_prev: unknown, form: FormData): Promise
   await audit(admin, "redeem.generate", batch, { count, amount, maxUses, expires });
   revalidatePath("/admin/codes");
   return { codes };
+}
+
+// ---------- upstream catalogs (DeepInfra, Novita) ----------
+
+async function loadChannelForCatalog(id: number) {
+  const [row] = await getDb().select().from(schema.channels).where(eq(schema.channels.id, id));
+  if (!row) throw new Error("channel not found");
+  return { ...row, credentials: JSON.parse(decrypt(row.credentials)) as Record<string, string> };
+}
+
+/**
+ * Adds the picked catalog models to the channel (mapping and per-model cost) and creates a price
+ * row for each public name that has none, at the upstream's price as list, times `markup`.
+ * Prices come from a fresh catalog fetch, never from the form.
+ */
+export async function importCatalogModels(form: FormData) {
+  const admin = await requireAdmin();
+  const id = num(form, "id", 0);
+  const ch = await loadChannelForCatalog(id);
+  const catalog = new Map((await fetchCatalog(ch)).map((m) => [m.id, m]));
+  const markup = Math.max(0, num(form, "markup", 1.2));
+  const batchMarkup = str(form, "batchMarkup") === "" ? null : Math.max(0, num(form, "batchMarkup", 0));
+
+  const models = new Set(ch.models);
+  const modelMapping = { ...ch.modelMapping };
+  const modelCosts = { ...ch.modelCosts };
+  const added: string[] = [];
+  const db = getDb();
+  for (const upstreamId of form.getAll("pick").map(String)) {
+    const m = catalog.get(upstreamId);
+    if (!m) continue;
+    const pub = str(form, `name:${upstreamId}`) || suggestPublicName(upstreamId);
+    models.add(pub);
+    if (pub !== upstreamId) modelMapping[pub] = upstreamId;
+    else delete modelMapping[pub];
+    modelCosts[pub] = m.cost;
+    added.push(pub);
+    await db
+      .insert(schema.modelPrices)
+      .values({
+        model: pub,
+        inputPrice: m.cost.input,
+        outputPrice: m.cost.output,
+        cacheReadPrice: m.cost.cacheRead ?? null,
+        markup,
+        batchMarkup,
+      })
+      .onConflictDoNothing();
+  }
+  await db.update(schema.channels).set({ models: [...models], modelMapping, modelCosts }).where(eq(schema.channels.id, id));
+  await audit(admin, "channel.catalog_import", `channel:${id}`, { added, markup, batchMarkup });
+  invalidateChannels();
+  invalidate("prices");
+  revalidatePath(`/admin/channels/${id}`);
+  redirect(`/admin/channels/${id}?imported=${added.length}`);
+}
+
+export interface CostRefreshResult {
+  ok: boolean;
+  message: string;
+  changes: { model: string; before: ModelCost | null; after: ModelCost }[];
+  missing: string[];
+}
+
+/** Re-reads the channel's catalog and updates the per-model costs of the models it serves. */
+export async function refreshCatalogCosts(_prev: unknown, form: FormData): Promise<CostRefreshResult> {
+  const admin = await requireAdmin();
+  const id = num(form, "id", 0);
+  try {
+    const ch = await loadChannelForCatalog(id);
+    const catalog = new Map((await fetchCatalog(ch)).map((m) => [m.id, m]));
+    const modelCosts = { ...ch.modelCosts };
+    const changes: CostRefreshResult["changes"] = [];
+    const missing: string[] = [];
+    for (const pub of ch.models) {
+      const m = catalog.get(ch.modelMapping[pub] ?? pub);
+      if (!m) {
+        missing.push(pub);
+        continue;
+      }
+      const before = ch.modelCosts[pub] ?? null;
+      if (JSON.stringify(before) !== JSON.stringify(m.cost)) changes.push({ model: pub, before, after: m.cost });
+      modelCosts[pub] = m.cost;
+    }
+    await getDb().update(schema.channels).set({ modelCosts }).where(eq(schema.channels.id, id));
+    if (changes.length) await audit(admin, "channel.costs_refresh", `channel:${id}`, { changes });
+    invalidateChannels();
+    revalidatePath(`/admin/channels/${id}`);
+    return { ok: true, message: `${changes.length} cost change(s)`, changes, missing };
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : String(err), changes: [], missing: [] };
+  }
 }

@@ -55,6 +55,7 @@ await db.insert(schema.modelPrices).values([
   { model: "claude-batch", inputPrice: 3, outputPrice: 15, batchMarkup: 0.8 },
   { model: "claude-batch-big", inputPrice: 15, outputPrice: 75, batchMarkup: 0.8 },
   { model: "relay-batch", inputPrice: 2, outputPrice: 8, batchMarkup: 0.9 },
+  { model: "oss-model", inputPrice: 1, outputPrice: 2, markup: 1.2, batchMarkup: 0.9 },
   { model: "ptu-test", inputPrice: 1, outputPrice: 1 },
   { model: "nomusage-test", inputPrice: 1, outputPrice: 1 },
 ]);
@@ -72,6 +73,9 @@ await db.insert(schema.channels).values([
   channel({ name: "ptu", provider: "azure_openai", source: "cloud", baseUrl: `${MOCK}/ptu/v1`, credentials: { apiKey: "up-azure" }, models: ["ptu-test"], priority: 10, fixedCostHourly: 1, capacityTpm: 1000 }),
   // a DeepInfra-style relay: batches on, its own batch price (80% of list), an org header
   channel({ name: "batch relay", provider: "openai_compatible", source: "reseller", baseUrl: `${MOCK}/openai/v1`, config: { batch: "on", batchCostFactor: "0.8", extraHeaders: "X-Organization-ID: org_e2e" }, credentials: { apiKey: "up-openai" }, models: ["relay-batch"], modelMapping: { "relay-batch": "gpt-4o-batch-up" } }),
+  // the same open model on two per-token providers, each with its own price for it
+  channel({ name: "deepinfra-like", provider: "openai_compatible", source: "reseller", baseUrl: `${MOCK}/openai/v1`, config: { batch: "on", batchCostFactor: "0.8" }, credentials: { apiKey: "up-openai" }, models: ["oss-model"], modelMapping: { "oss-model": "gpt-4o-batch-up" }, modelCosts: { "oss-model": { input: 0.5, output: 1 } }, priority: 10 }),
+  channel({ name: "novita-like", provider: "openai_compatible", source: "reseller", baseUrl: `${MOCK}/openai/v1`, config: { batch: "on", batchCostFactor: "0.5" }, credentials: { apiKey: "up-openai" }, models: ["oss-model"], modelMapping: { "oss-model": "gpt-4o-batch-up" }, modelCosts: { "oss-model": { input: 0.6, output: 1.2 } }, priority: 5 }),
   channel({ name: "anthropic official", provider: "anthropic", source: "official", baseUrl: `${MOCK}/anthropic`, credentials: { apiKey: "up-anthropic" }, models: ["claude-batch", "claude-batch-big"], modelMapping: { "claude-batch": "claude-up", "claude-batch-big": "claude-up-big" } }),
   channel({ name: "reranker", provider: "openai_compatible", source: "reseller", baseUrl: `${MOCK}/openai/v1`, credentials: { apiKey: "up-openai" }, models: ["rerank-test"] }),
   channel({ name: "creditless", provider: "anthropic_compatible", source: "reseller", baseUrl: `${MOCK}/creditless`, credentials: { apiKey: "x" }, models: ["fault-test"], priority: 9 }),
@@ -596,6 +600,44 @@ await step("Relay channels send their extra headers on live requests", async () 
   assert.equal(res.status, 200);
   await logsSettled(++logs);
   assert.equal(lastUpstream("/openai/v1/chat").headers["x-organization-id"], "org_e2e");
+});
+
+await step("Per-model upstream costs: live traffic on the priority provider, batches on the cheapest batch provider", async () => {
+  const [di] = await db.select().from(schema.channels).where(eq(schema.channels.name, "deepinfra-like"));
+  const [nv] = await db.select().from(schema.channels).where(eq(schema.channels.name, "novita-like"));
+  let res = await post("/v1/chat/completions", { model: "oss-model", messages: [{ role: "user", content: "hi" }] });
+  assert.equal(res.status, 200);
+  await logsSettled(++logs);
+  let log = await lastLog();
+  // 16 input + 4 cached (falls back to input) + 5 output: list 30 x 1.2 = 36; DeepInfra's own cost 10 + 5 = 15
+  assert.equal(log.channelId, di.id);
+  assert.equal(log.cost, 36);
+  assert.equal(log.upstreamCost, 15);
+
+  const line = (id: string) => JSON.stringify({ custom_id: id, method: "POST", url: "/v1/chat/completions", body: { model: "oss-model", messages: [{ role: "user", content: "hi" }] } });
+  const form = new FormData();
+  form.set("purpose", "batch");
+  form.set("file", new Blob([[line("a"), line("b")].join("\n")]), "in.jsonl");
+  const file = await (await fetch(`${BASE}/v1/files`, { method: "POST", headers: { authorization: `Bearer ${key}` }, body: form })).json();
+  res = await post("/v1/batches", { input_file_id: file.id, endpoint: "/v1/chat/completions" });
+  assert.equal(res.status, 200, await res.clone().text());
+  const { id } = await res.json();
+  await fetch(`${BASE}/v1/batches/${id}`, { headers: { authorization: `Bearer ${key}` } });
+  logs++;
+  log = await lastLog();
+  // 200 in + 20 out: list 240 x 0.9 = 216. Novita batch (120 + 24) x 0.5 = 72 beats DeepInfra (100 + 20) x 0.8 = 96
+  assert.equal(log.channelId, nv.id);
+  assert.equal(log.cost, 216);
+  assert.equal(log.upstreamCost, 72);
+});
+
+await step("Upstream catalogs are read from DeepInfra's and Novita's price lists", async () => {
+  const { fetchCatalog } = await import("../src/lib/upstream-catalog");
+  const base = { id: 0, name: "c", provider: "openai_compatible" as const, credentials: {}, models: [], modelMapping: {}, modelCosts: {} } as never as Parameters<typeof fetchCatalog>[0];
+  const deepinfra = await fetchCatalog({ ...base, baseUrl: `${MOCK}/v1/openai`, config: { catalog: "deepinfra" }, credentials: { apiKey: "x" } });
+  assert.deepEqual(deepinfra, [{ id: "meta-llama/Llama-3.3-70B-Instruct-Turbo", cost: { input: 0.1, output: 0.32 }, contextSize: 131072 }]);
+  const novita = await fetchCatalog({ ...base, baseUrl: `${MOCK}/novita/openai/v1`, config: { catalog: "novita" }, credentials: { apiKey: "up-novita" } });
+  assert.deepEqual(novita, [{ id: "meta-llama/llama-3.3-70b-instruct", cost: { input: 0.135, output: 0.4 }, contextSize: 131072 }]);
 });
 
 await step("Anthropic message batch: create, poll, bill, results, delete", async () => {

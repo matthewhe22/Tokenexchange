@@ -16,6 +16,7 @@ export interface ChannelFormValue {
   priority: number;
   weight: number;
   costMultiplier: number;
+  modelCosts: Record<string, { input: number; output: number; cacheRead?: number }>;
   fixedCostHourly: number | null;
   capacityTpm: number | null;
   /** YYYY-MM-DD in the app time zone */
@@ -41,7 +42,8 @@ const CONFIG_LABELS: Record<string, string> = {
   location: "Location (default: global)",
   extraHeaders: "Extra request headers, one \"Name: value\" per line (not for secrets)",
   batch: "Batch API",
-  batchCostFactor: "Upstream batch price ÷ list (default 0.5; DeepInfra 0.8)",
+  catalog: "Upstream price catalog",
+  batchCostFactor: "Upstream batch price ÷ its standard price (default 0.5; DeepInfra 0.8)",
 };
 
 export function ChannelForm({ value, action }: { value: ChannelFormValue; action: (form: FormData) => Promise<void> }) {
@@ -83,6 +85,12 @@ export function ChannelForm({ value, action }: { value: ChannelFormValue; action
             <label>{CONFIG_LABELS[k] ?? k}</label>
             {k === "extraHeaders" ? (
               <textarea name={`config.${k}`} defaultValue={value.config[k] ?? ""} placeholder="X-Organization-ID: org_123" />
+            ) : k === "catalog" ? (
+              <select name={`config.${k}`} defaultValue={value.config[k] ?? ""}>
+                <option value="">None</option>
+                <option value="deepinfra">DeepInfra (/models/list)</option>
+                <option value="novita">Novita (/models)</option>
+              </select>
             ) : k === "batch" ? (
               <select name={`config.${k}`} defaultValue={value.config[k] ?? ""}>
                 <option value="">Off</option>
@@ -134,6 +142,19 @@ export function ChannelForm({ value, action }: { value: ChannelFormValue; action
         <div>
           <label>Cost multiplier (our cost ÷ list price)</label>
           <input name="costMultiplier" type="number" step="0.001" min={0} defaultValue={value.costMultiplier} />
+        </div>
+        <div className="wide">
+          <label>
+            Upstream cost per model, USD per 1M tokens (one per line: public-name=input/output or input/output/cached).
+            Overrides the cost multiplier for these models; filled by the catalog import.
+          </label>
+          <textarea
+            name="modelCosts"
+            defaultValue={Object.entries(value.modelCosts)
+              .map(([m, c]) => `${m}=${c.input}/${c.output}${c.cacheRead != null ? `/${c.cacheRead}` : ""}`)
+              .join("\n")}
+            placeholder="llama-3.3-70b-instruct=0.10/0.32"
+          />
         </div>
         <div className="wide muted" style={{ marginTop: 8 }}>
           <strong>Committed capacity</strong> (Azure PTU, Bedrock / Vertex provisioned throughput, Fireworks reserved). Leave blank

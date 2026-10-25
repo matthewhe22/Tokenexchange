@@ -70,7 +70,7 @@ export const PROVIDER_INFO: Record<
     // Rerank follows the Cohere/Jina shape most relays expose at /v1/rerank.
     protocols: [...OPENAI_PROTOCOLS, "rerank"],
     credentialFields: ["apiKey"],
-    configFields: ["extraHeaders", "batch", "batchCostFactor"],
+    configFields: ["catalog", "extraHeaders", "batch", "batchCostFactor"],
     baseUrlHint: "https://relay.example.com/v1",
   },
   anthropic_compatible: {
@@ -98,6 +98,37 @@ export function parseExtraHeaders(raw: string | undefined): Record<string, strin
   }
   return out;
 }
+
+/** Ready-made settings for per-token upstreams, offered as "Add DeepInfra channel" etc. */
+export const CHANNEL_PRESETS: Record<
+  string,
+  { name: string; provider: Provider; source: Source; baseUrl: string; config: Record<string, string>; note: string }
+> = {
+  deepinfra: {
+    name: "DeepInfra",
+    provider: "openai_compatible",
+    source: "reseller",
+    baseUrl: "https://api.deepinfra.com/v1/openai",
+    config: { catalog: "deepinfra", batch: "on", batchCostFactor: "0.8" },
+    note: "Batches are billed at 80% of DeepInfra's price. DeepInfra's terms forbid reselling without a written agreement.",
+  },
+  novita: {
+    name: "Novita AI",
+    provider: "openai_compatible",
+    source: "reseller",
+    baseUrl: "https://api.novita.ai/openai/v1",
+    config: { catalog: "novita", batch: "on", batchCostFactor: "0.5" },
+    note: "Batches are billed at 50% of Novita's price (introductory). Confirm resale terms with Novita.",
+  },
+  gmi: {
+    name: "GMI Cloud",
+    provider: "openai_compatible",
+    source: "reseller",
+    baseUrl: "https://api.gmi-serving.com/v1",
+    config: {},
+    note: "Add your X-Organization-ID header if your account needs it. Enter per-model costs by hand. Confirm resale terms with GMI.",
+  },
+};
 
 export function supports(provider: Provider, protocol: Protocol): boolean {
   return PROVIDER_INFO[provider].protocols.includes(protocol);

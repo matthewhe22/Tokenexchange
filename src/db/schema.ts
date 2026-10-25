@@ -13,6 +13,13 @@ import {
 } from "drizzle-orm/pg-core";
 import { PROVIDERS, SOURCES, type Provider, type Source } from "./enums";
 
+/** An upstream's own per-token price for one model, USD per 1M tokens. */
+export interface ModelCost {
+  input: number;
+  output: number;
+  cacheRead?: number;
+}
+
 // All money columns are integer micro-USD: 1 USD = 1_000_000.
 // A price of $X per 1M tokens therefore costs exactly X micro-USD per token.
 
@@ -95,6 +102,10 @@ export const channels = pgTable("channels", {
   weight: integer("weight").notNull().default(1),
   // What this channel costs us relative to list price (0.8 = we pay 80%). Used for margin reports.
   costMultiplier: doublePrecision("cost_multiplier").notNull().default(1),
+  // What this channel charges per model, USD per 1M tokens: public model -> { input, output, cacheRead? }.
+  // Takes precedence over costMultiplier, for upstreams that price each model their own way
+  // (DeepInfra, Novita). Filled by the catalog import on the channel page.
+  modelCosts: jsonb("model_costs").$type<Record<string, ModelCost>>().notNull().default({}),
   // Committed capacity (Azure PTU, Bedrock / Vertex provisioned throughput, Fireworks reserved):
   // a take-or-pay price in USD per hour. When set, requests on this channel have no marginal cost
   // and the commitment is reported on the Capacity page instead.

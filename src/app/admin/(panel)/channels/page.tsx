@@ -1,10 +1,12 @@
 import { asc, desc } from "drizzle-orm";
 import { getDb, schema } from "@/db";
 import { ChannelForm } from "@/components/channel-form";
-import { PROVIDER_INFO } from "@/relay/providers/info";
+import { CHANNEL_PRESETS, PROVIDER_INFO } from "@/relay/providers/info";
 import { saveChannel, toggleChannel } from "../../actions";
 
-export default async function ChannelsPage() {
+export default async function ChannelsPage({ searchParams }: { searchParams: Promise<{ preset?: string }> }) {
+  const { preset: presetKey } = await searchParams;
+  const preset = presetKey ? CHANNEL_PRESETS[presetKey] : undefined;
   const rows = await getDb()
     .select()
     .from(schema.channels)
@@ -48,10 +50,36 @@ export default async function ChannelsPage() {
         </table>
       </div>
 
-      <h2>Add channel</h2>
+      <h2 id="add">Add channel</h2>
+      <div className="row" style={{ marginBottom: 12, flexWrap: "wrap" }}>
+        <span className="muted">Start from:</span>
+        <a className={!preset ? "badge ok" : "badge"} href="/admin/channels#add">Blank</a>
+        {Object.entries(CHANNEL_PRESETS).map(([k, p]) => (
+          <a key={k} className={presetKey === k ? "badge ok" : "badge"} href={`/admin/channels?preset=${k}#add`}>{p.name}</a>
+        ))}
+      </div>
+      {preset && <div className="notice">{preset.note} After saving, open the channel to import models and prices from its catalog.</div>}
       <ChannelForm
+        key={presetKey ?? "blank"}
         action={saveChannel}
-        value={{ name: "", provider: "openai", source: "", baseUrl: "", config: {}, models: [], modelMapping: {}, priority: 0, weight: 1, costMultiplier: 1, fixedCostHourly: null, capacityTpm: null, commitmentEndsAt: "", enabled: true, storedCredentials: [] }}
+        value={{
+          name: preset?.name ?? "",
+          provider: preset?.provider ?? "openai",
+          source: preset?.source ?? "",
+          baseUrl: preset?.baseUrl ?? "",
+          config: preset?.config ?? {},
+          models: [],
+          modelMapping: {},
+          priority: 0,
+          weight: 1,
+          costMultiplier: 1,
+          modelCosts: {},
+          fixedCostHourly: null,
+          capacityTpm: null,
+          commitmentEndsAt: "",
+          enabled: true,
+          storedCredentials: [],
+        }}
       />
     </>
   );

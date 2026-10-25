@@ -64,6 +64,13 @@
       "when": 1792883352050,
       "tag": "0008_batch_request_models",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1792921295491,
+      "tag": "0009_channel_model_costs",
+      "breakpoints": true
     }
   ]
 }

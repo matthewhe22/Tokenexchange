@@ -5,6 +5,7 @@ import { waitUntil } from "@vercel/functions";
 import { cached } from "./cache";
 import { maybeNotifyLowBalance } from "./notifications";
 import { tierFactors, type Tier } from "./tiers";
+import type { ModelCost } from "@/db/schema";
 
 export type ModelPrice = typeof schema.modelPrices.$inferSelect;
 
@@ -60,6 +61,15 @@ export interface ChannelCost {
   commitmentEndsAt?: Date | null;
   /** Non-secret provider settings; `batchCostFactor` overrides what the upstream charges for batches. */
   config?: Record<string, string>;
+  /** The upstream's own price per model (USD per 1M tokens), used instead of list x costMultiplier. */
+  modelCosts?: Record<string, ModelCost>;
+}
+
+/** What this channel charges for `usage` of `model` at standard rates, in micro-USD, or null if unknown. */
+function ownCost(usage: Usage, model: string, channel: ChannelCost): number | null {
+  const c = channel.modelCosts?.[model];
+  if (!c) return null;
+  return usage.input * c.input + usage.output * c.output + usage.cacheRead * (c.cacheRead ?? c.input) + usage.cacheWrite * c.input;
 }
 
 /** Upstream price of `tier` as a multiple of list on this channel (before its cost multiplier). */
@@ -72,7 +82,10 @@ export function chargeFor(usage: Usage, price: ModelPrice, channel: ChannelCost,
   const list = listCost(usage, price);
   const f = tierFactors(price, tier) ?? tierFactors(price, "standard")!;
   const committed = channel.fixedCostHourly != null && (channel.commitmentEndsAt == null || channel.commitmentEndsAt > new Date());
-  const upstreamCost = committed ? 0 : Math.round(list * upstreamListFactor(f, tier, channel) * channel.costMultiplier);
+  const own = ownCost(usage, price.model, channel);
+  const upstreamCost = committed
+    ? 0
+    : Math.round((own ?? list * channel.costMultiplier) * upstreamListFactor(f, tier, channel));
   return { cost: Math.ceil(list * f.sell), upstreamCost };
 }
 

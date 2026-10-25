@@ -633,6 +633,20 @@ await step("Per-model upstream costs: live traffic on the priority provider, bat
   assert.equal(log.upstreamCost, 72);
 });
 
+await step("Prices are compared with OpenRouter's list", async () => {
+  process.env.BENCHMARK_MODELS_URL = `${MOCK}/openrouter/api/v1/models`;
+  const { compareWithBenchmark } = await import("../src/lib/benchmark");
+  const prices = await db.select().from(schema.modelPrices);
+  const { rows, error } = await compareWithBenchmark(prices);
+  assert.equal(error, null);
+  const byModel = Object.fromEntries(rows.map((r) => [r.model, r]));
+  // gpt-test sells at 2 / 8 against 1.5 / 6: a third above OpenRouter
+  assert.ok(Math.abs(byModel["gpt-test"].diff! - 1 / 3) < 1e-9);
+  // oss-model: 1.2 / 2.4 real-time and 0.9 / 1.8 batch against 2 / 4
+  assert.ok(byModel["oss-model"].diff! < 0 && byModel["oss-model"].batchDiff! < byModel["oss-model"].diff!);
+  assert.equal(byModel["claude-test"].bench, null);
+});
+
 await step("Upstream catalogs are read from DeepInfra's and Novita's price lists", async () => {
   const { fetchCatalog } = await import("../src/lib/upstream-catalog");
   const base = { id: 0, name: "c", provider: "openai_compatible" as const, credentials: {}, models: [], modelMapping: {}, modelCosts: {} } as never as Parameters<typeof fetchCatalog>[0];

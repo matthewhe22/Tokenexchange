@@ -44,7 +44,7 @@ describe("usage extraction", () => {
 });
 
 describe("chargeFor", () => {
-  const price = { model: "m", inputPrice: 3, outputPrice: 15, cacheReadPrice: 0.3, cacheWritePrice: null, markup: 1.2, maxOutputTokens: null, tierThreshold: null, tierInputPrice: null, tierOutputPrice: null, perRequestPrice: null, flexMarkup: null, batchMarkup: null, priorityMultiplier: null, enabled: true, updatedAt: new Date() };
+  const price = { model: "m", inputPrice: 3, outputPrice: 15, cacheReadPrice: 0.3, cacheWritePrice: null, markup: 1.2, maxOutputTokens: null, tierThreshold: null, tierInputPrice: null, tierOutputPrice: null, perRequestPrice: null, flexMarkup: null, batchMarkup: null, priorityMultiplier: null, benchmarkId: null, enabled: true, updatedAt: new Date() };
   it("prices in micro-USD and applies markup and cost multiplier", () => {
     // 1000*3 + 100*15 + 1000*0.3 + 10*3 (cache write falls back to input) = 4830 list
     const r = chargeFor({ input: 1000, output: 100, cacheRead: 1000, cacheWrite: 10 }, price, { costMultiplier: 0.7 });
@@ -81,7 +81,7 @@ describe("relay channel settings", async () => {
     expect(parseExtraHeaders(undefined)).toEqual({});
   });
   it("bills a relay's own batch price when set (DeepInfra: 80% of list)", () => {
-    const price = { model: "m", inputPrice: 1, outputPrice: 0, cacheReadPrice: null, cacheWritePrice: null, markup: 1, maxOutputTokens: null, tierThreshold: null, tierInputPrice: null, tierOutputPrice: null, perRequestPrice: null, flexMarkup: null, batchMarkup: 0.9, priorityMultiplier: null, enabled: true, updatedAt: new Date() };
+    const price = { model: "m", inputPrice: 1, outputPrice: 0, cacheReadPrice: null, cacheWritePrice: null, markup: 1, maxOutputTokens: null, tierThreshold: null, tierInputPrice: null, tierOutputPrice: null, perRequestPrice: null, flexMarkup: null, batchMarkup: 0.9, priorityMultiplier: null, benchmarkId: null, enabled: true, updatedAt: new Date() };
     const u = { input: 1000, output: 0, cacheRead: 0, cacheWrite: 0 };
     expect(chargeFor(u, price, { costMultiplier: 1, config: { batchCostFactor: "0.8" } }, "batch")).toEqual({ cost: 900, upstreamCost: 800 });
     expect(chargeFor(u, price, { costMultiplier: 1, config: {} }, "batch")).toEqual({ cost: 900, upstreamCost: 500 });
@@ -92,7 +92,7 @@ describe("relay channel settings", async () => {
 
 describe("service_tier handling", async () => {
   const { applyRequestedTier } = await import("@/lib/tiers");
-  const price = { model: "m", inputPrice: 3, outputPrice: 15, cacheReadPrice: null, cacheWritePrice: null, markup: 1, maxOutputTokens: null, tierThreshold: null, tierInputPrice: null, tierOutputPrice: null, perRequestPrice: null, flexMarkup: null, batchMarkup: null, priorityMultiplier: null, enabled: true, updatedAt: new Date() };
+  const price = { model: "m", inputPrice: 3, outputPrice: 15, cacheReadPrice: null, cacheWritePrice: null, markup: 1, maxOutputTokens: null, tierThreshold: null, tierInputPrice: null, tierOutputPrice: null, perRequestPrice: null, flexMarkup: null, batchMarkup: null, priorityMultiplier: null, benchmarkId: null, enabled: true, updatedAt: new Date() };
   const tiered = { ...price, flexMarkup: 0.8, priorityMultiplier: 2 };
   it("only passes tiers the model is offered on", () => {
     const b1: Record<string, unknown> = { service_tier: "priority" };
@@ -132,7 +132,7 @@ describe("formatting", async () => {
 
 describe("worst-case cost planning", async () => {
   const r = await import("@/lib/reservations");
-  const price = { model: "m", inputPrice: 2, outputPrice: 10, cacheReadPrice: null, cacheWritePrice: null, markup: 1.5, maxOutputTokens: null, tierThreshold: null, tierInputPrice: null, tierOutputPrice: null, perRequestPrice: null, flexMarkup: null, batchMarkup: null, priorityMultiplier: null, enabled: true, updatedAt: new Date() };
+  const price = { model: "m", inputPrice: 2, outputPrice: 10, cacheReadPrice: null, cacheWritePrice: null, markup: 1.5, maxOutputTokens: null, tierThreshold: null, tierInputPrice: null, tierOutputPrice: null, perRequestPrice: null, flexMarkup: null, batchMarkup: null, priorityMultiplier: null, benchmarkId: null, enabled: true, updatedAt: new Date() };
 
   it("counts text at 3 bytes/token and base64 blobs per blob", () => {
     expect(r.estimateInputTokens("x".repeat(300))).toBe(100);

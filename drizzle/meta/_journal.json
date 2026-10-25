@@ -71,6 +71,13 @@
       "when": 1792921295491,
       "tag": "0009_channel_model_costs",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1792960240567,
+      "tag": "0010_model_benchmark_id",
+      "breakpoints": true
     }
   ]
 }

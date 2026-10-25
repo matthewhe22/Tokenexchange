@@ -1,8 +1,8 @@
-# Tenon 榫卯 — brand guide
+# Tenon — brand guide
 
-The customer-facing name is **Tenon** (Chinese: **榫卯**). A tenon is the tongue of a mortise-and-tenon joint,
-which holds timber together without glue or nails. That is the product promise: your existing SDK fits every
-model, with no glue code.
+The customer-facing name is **Tenon**, in every language. A tenon is the tongue of a mortise-and-tenon joint
+(榫卯), which holds timber together without glue or nails. That is the product promise: your existing SDK fits
+every model, with no glue code.
 
 Tagline: **One API key for every frontier model** / **一个 API Key，调用所有前沿模型**.
 
@@ -18,7 +18,8 @@ The mark is a beam whose gold tenon sits inside a post, on a walnut tile.
 | Link previews | `src/app/opengraph-image.png` (1200×630) |
 | Installed web app | `src/app/manifest.ts` |
 
-- The lockup is mark + "Tenon" + "榫卯". The Chinese name can be dropped where space is tight (`<TenonLogo zh={false} />`).
+- The lockup is mark + "Tenon", the same in every locale. The logo, page titles, the manifest and the link
+  preview card carry no Chinese text, and English pages show none apart from the 中文 language switch.
 - Keep clear space of at least half the mark's width around the lockup.
 - Don't recolour, outline, rotate or add effects to the mark. Its colours are fixed and do not follow the theme.
 

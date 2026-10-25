@@ -9,8 +9,8 @@ const display = Fraunces({ subsets: ["latin"], variable: "--font-display", displ
 
 export const metadata: Metadata = {
   metadataBase: new URL(appUrl()),
-  title: { default: "Tenon 榫卯 · One API key for every frontier model", template: "%s · Tenon" },
-  description: "Tenon (榫卯) is a unified API gateway for OpenAI, Anthropic and Gemini models, billed per token.",
+  title: { default: "Tenon · One API key for every frontier model", template: "%s · Tenon" },
+  description: "Tenon is a unified API gateway for OpenAI, Anthropic and Gemini models, billed per token.",
   applicationName: "Tenon",
 };
 

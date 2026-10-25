@@ -292,6 +292,8 @@ await step("GET /v1/models lists priced models", async () => {
   const res = await fetch(`${BASE}/v1/models`, { headers: { authorization: `Bearer ${key}` } });
   const ids = (await res.json()).data.map((m: { id: string }) => m.id);
   assert.ok(ids.includes("gpt-test") && ids.includes("claude-test"));
+  // priced, but no channel serves it
+  assert.ok(!ids.includes("orphan-test"));
 });
 
 // ---------- P0: reservations, rate limits ----------

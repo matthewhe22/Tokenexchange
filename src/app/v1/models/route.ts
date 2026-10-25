@@ -1,4 +1,5 @@
 import { getPrices } from "@/lib/billing";
+import { servedModels } from "@/lib/channels";
 import { authenticateApiKey, extractApiKey } from "@/relay/auth";
 import { relayError } from "@/relay/errors";
 
@@ -13,8 +14,10 @@ export async function GET(req: Request) {
   if (!auth.ok) return relayError("openai-chat", auth.status, auth.message);
 
   const allowed = auth.apiKey.allowedModels;
-  const data = [...(await getPrices()).values()]
-    .filter((p) => p.enabled && (!allowed || allowed.includes(p.model)))
+  const [prices, served] = await Promise.all([getPrices(), servedModels()]);
+  // Only models some enabled channel can serve right now.
+  const data = [...prices.values()]
+    .filter((p) => p.enabled && served.live.has(p.model) && (!allowed || allowed.includes(p.model)))
     .map((p) => ({
       id: p.model,
       object: "model",

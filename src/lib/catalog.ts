@@ -1,4 +1,5 @@
 import { getPrices, type ModelPrice } from "./billing";
+import { servedModels } from "./channels";
 
 export type Vendor = "OpenAI" | "Anthropic" | "Google" | "Other";
 
@@ -23,11 +24,16 @@ export interface PublicPrice {
   flex: { input: number; output: number } | null;
 }
 
-/** Customer-facing prices (list x markup) in USD per 1M tokens, grouped by vendor. */
+/**
+ * Customer-facing prices (list x markup) in USD per 1M tokens, grouped by vendor. Only models an
+ * enabled channel serves are listed, and a batch price only where a batch-capable channel does.
+ */
 export async function publicPriceList(): Promise<PublicPrice[]> {
   const order: Vendor[] = ["OpenAI", "Anthropic", "Google", "Other"];
-  return [...(await getPrices()).values()]
-    .filter((p) => p.enabled)
+  const [prices, served] = await Promise.all([getPrices(), servedModels()]);
+  return [...prices.values()]
+    .filter((p) => p.enabled && served.live.has(p.model))
+    .map((p) => (served.batch.has(p.model) ? p : { ...p, batchMarkup: null }))
     .map((p: ModelPrice) => ({
       model: p.model,
       vendor: vendorOf(p.model),

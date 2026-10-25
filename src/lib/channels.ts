@@ -2,6 +2,8 @@ import { eq, sql } from "drizzle-orm";
 import { getDb, schema } from "@/db";
 import { cached, invalidate } from "./cache";
 import { decrypt } from "./crypto";
+import { getRoutingSettings } from "./settings";
+import { batchCapable } from "@/relay/batch/upstream";
 
 export type ChannelRow = typeof schema.channels.$inferSelect;
 export type LoadedChannel = Omit<ChannelRow, "credentials"> & { credentials: Record<string, string> };
@@ -47,4 +49,24 @@ export async function markChannelHealthy(id: number): Promise<void> {
 export async function loadChannel(id: number): Promise<LoadedChannel | null> {
   const [row] = await getDb().select().from(schema.channels).where(eq(schema.channels.id, id));
   return row ? { ...row, credentials: JSON.parse(decrypt(row.credentials)) } : null;
+}
+
+/**
+ * Models customers can actually call: served by an enabled channel whose source routing allows
+ * for that model. `batch` is the subset served by a channel that can run batches.
+ */
+export async function servedModels(): Promise<{ live: Set<string>; batch: Set<string> }> {
+  const [channels, routing] = await Promise.all([getActiveChannels(), getRoutingSettings()]);
+  const live = new Set<string>();
+  const batch = new Set<string>();
+  for (const ch of channels) {
+    if (!routing.enabledSources.includes(ch.source)) continue;
+    const runsBatches = batchCapable(ch, "openai") || batchCapable(ch, "anthropic");
+    for (const m of ch.models) {
+      if (!(routing.modelSources[m] ?? routing.enabledSources).includes(ch.source)) continue;
+      live.add(m);
+      if (runsBatches) batch.add(m);
+    }
+  }
+  return { live, batch };
 }

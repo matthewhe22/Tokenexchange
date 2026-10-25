@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { perMillion, publicPriceList, type Vendor } from "@/lib/catalog";
+import { batchDeals, maxBatchSaving, perMillion, publicPriceList, type Vendor } from "@/lib/catalog";
 import { getDict } from "@/lib/i18n";
 
 export const metadata = { title: "Pricing · TokenExchange" };
@@ -7,10 +7,17 @@ export const metadata = { title: "Pricing · TokenExchange" };
 export default async function PricingPage() {
   const [prices, t] = await Promise.all([publicPriceList(), getDict()]);
   const vendors = [...new Set(prices.map((p) => p.vendor))] as Vendor[];
+  const pct = maxBatchSaving(batchDeals(prices));
   return (
     <div className="site-inner section">
       <h1 className="page-title">{t["pricing.title"]}</h1>
       <p className="lead">{t["pricing.lead"]}</p>
+      {pct != null && (
+        <div className="notice row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
+          <span><span className="badge ok">{t["batch.badge"]}</span> {t["batch.promoTitle"].replace("{pct}", String(pct))}</span>
+          <Link href="/batch">{t["batch.promoCta"]} →</Link>
+        </div>
+      )}
       {vendors.map((v) => (
         <section key={v}>
           <h2>{v}</h2>

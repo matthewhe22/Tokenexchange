@@ -43,3 +43,57 @@ print(resp.text)`,
     },
   ];
 }
+
+/** Batch quick-start code for the OpenAI and Anthropic SDKs. */
+export function batchSnippets(model = "gpt-4.1-mini", claudeModel = "claude-haiku-4-5") {
+  const base = appUrl();
+  return [
+    {
+      label: "OpenAI SDK",
+      code: `from openai import OpenAI
+import json
+
+client = OpenAI(base_url="${base}/v1", api_key="sk-tx-...")
+
+# requests.jsonl: one request per line
+with open("requests.jsonl", "w") as f:
+    for i, text in enumerate(["first document", "second document"]):
+        f.write(json.dumps({
+            "custom_id": f"doc-{i}",
+            "method": "POST",
+            "url": "/v1/chat/completions",
+            "body": {"model": "${model}",
+                     "messages": [{"role": "user", "content": f"Summarise: {text}"}]},
+        }) + "\\n")
+
+file = client.files.create(file=open("requests.jsonl", "rb"), purpose="batch")
+batch = client.batches.create(input_file_id=file.id,
+                              endpoint="/v1/chat/completions",
+                              completion_window="24h")
+
+# later
+batch = client.batches.retrieve(batch.id)
+if batch.status == "completed":
+    print(client.files.content(batch.output_file_id).text)`,
+    },
+    {
+      label: "Anthropic SDK",
+      code: `import anthropic
+
+client = anthropic.Anthropic(base_url="${base}", api_key="sk-tx-...")
+
+batch = client.messages.batches.create(requests=[
+    {"custom_id": f"doc-{i}",
+     "params": {"model": "${claudeModel}", "max_tokens": 512,
+                "messages": [{"role": "user", "content": f"Summarise: {text}"}]}}
+    for i, text in enumerate(["first document", "second document"])
+])
+
+# later
+batch = client.messages.batches.retrieve(batch.id)
+if batch.processing_status == "ended":
+    for result in client.messages.batches.results(batch.id):
+        print(result.custom_id, result.result.type)`,
+    },
+  ];
+}

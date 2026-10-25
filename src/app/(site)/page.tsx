@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { SdkTabs } from "@/components/sdk-tabs";
-import { perMillion, publicPriceList } from "@/lib/catalog";
+import { batchDeals, maxBatchSaving, perMillion, publicPriceList } from "@/lib/catalog";
 import { getDict } from "@/lib/i18n";
 import { sdkSnippets } from "@/lib/snippets";
 
@@ -10,6 +10,8 @@ export default async function Home() {
   const [prices, t] = await Promise.all([publicPriceList(), getDict()]);
   const features = ([1, 2, 3, 4] as const).map((i) => ({ title: t[`home.f${i}.title`], body: t[`home.f${i}.body`] }));
   const featured = prices.filter((p) => p.vendor !== "Other").slice(0, 6);
+  const deals = batchDeals(prices);
+  const pct = maxBatchSaving(deals);
   return (
     <>
       <section className="hero site-inner">
@@ -22,6 +24,34 @@ export default async function Home() {
         </div>
         <div className="hero-code">
           <SdkTabs tabs={sdkSnippets()} />
+        </div>
+      </section>
+
+      <section className="site-inner section">
+        <div className="card batch-promo">
+          <div className="batch-promo-text">
+            <span className="badge ok">{t["batch.badge"]}</span>
+            <h2>{pct != null ? t["batch.promoTitle"].replace("{pct}", String(pct)) : t["batch.promoTitleNoPct"]}</h2>
+            <p className="muted">{t["batch.promoBody"]}</p>
+            <Link href="/batch" className="btn">{t["batch.promoCta"]}</Link>
+          </div>
+          {deals.length > 0 && (
+            <table className="batch-promo-table">
+              <thead>
+                <tr><th>{t["pricing.model"]}</th><th colSpan={2}>{t["pricing.input"]} / 1M</th><th></th></tr>
+              </thead>
+              <tbody>
+                {deals.slice(0, 4).map((d) => (
+                  <tr key={d.model}>
+                    <td className="mono">{d.model}</td>
+                    <td className="muted"><s>{perMillion(d.realtime.input)}</s></td>
+                    <td><strong>{perMillion(d.batch.input)}</strong></td>
+                    <td><span className="badge ok">−{Math.floor(d.saving * 100)}%</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       </section>
 

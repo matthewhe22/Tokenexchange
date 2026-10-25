@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { CodeBlock } from "@/components/code-block";
 import { SdkTabs } from "@/components/sdk-tabs";
-import { sdkSnippets } from "@/lib/snippets";
+import { batchSnippets, sdkSnippets } from "@/lib/snippets";
 import { appUrl } from "@/lib/url";
 
 export const metadata = { title: "Docs · TokenExchange" };
@@ -14,6 +14,7 @@ export default function DocsPage() {
         <a href="#start">Getting started</a>
         <a href="#endpoints">Endpoints</a>
         <a href="#sdks">SDK examples</a>
+        <a href="#batch">Batch API</a>
         <a href="#tools">Coding tools</a>
         <a href="#errors">Errors</a>
         <a href="#limits">Limits</a>
@@ -40,6 +41,8 @@ export default function DocsPage() {
               <tr><td>Anthropic Messages</td><td className="mono">POST /v1/messages</td><td className="mono">x-api-key or Bearer</td></tr>
               <tr><td>Gemini</td><td className="mono">POST /v1beta/models/&#123;model&#125;:generateContent<br />POST /v1beta/models/&#123;model&#125;:streamGenerateContent</td><td className="mono">x-goog-api-key or ?key=</td></tr>
               <tr><td>List models</td><td className="mono">GET /v1/models</td><td className="mono">any</td></tr>
+              <tr><td>OpenAI Batch</td><td className="mono">POST /v1/files<br />POST /v1/batches · GET /v1/batches/&#123;id&#125;<br />GET /v1/files/&#123;id&#125;/content</td><td className="mono">Authorization: Bearer</td></tr>
+              <tr><td>Anthropic Message Batches</td><td className="mono">POST /v1/messages/batches<br />GET /v1/messages/batches/&#123;id&#125;/results</td><td className="mono">x-api-key or Bearer</td></tr>
             </tbody>
           </table>
         </div>
@@ -51,6 +54,15 @@ export default function DocsPage() {
 
         <h2 id="sdks">SDK examples</h2>
         <SdkTabs tabs={sdkSnippets()} />
+
+        <h2 id="batch">Batch API</h2>
+        <p>
+          Asynchronous jobs at discounted batch rates, through the OpenAI Files + Batches API (<code>/v1/files</code>,
+          <code> /v1/batches</code>) and Anthropic Message Batches (<code>/v1/messages/batches</code>). Up to 50,000 requests per
+          batch; results within 24 hours; you pay only for requests that complete. Prices and a quick start are on the{" "}
+          <Link href="/batch">Batch API page</Link>.
+        </p>
+        <SdkTabs tabs={batchSnippets()} />
 
         <h2 id="tools">Coding tools</h2>
         <h3>Claude Code</h3>

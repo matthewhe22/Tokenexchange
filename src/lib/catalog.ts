@@ -50,3 +50,32 @@ export function perMillion(usd: number | null): string {
   if (usd == null) return "—";
   return "$" + usd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 4 });
 }
+
+export interface BatchDeal {
+  model: string;
+  vendor: Vendor;
+  realtime: { input: number; output: number };
+  batch: { input: number; output: number };
+  /** Fraction saved against the real-time price, e.g. 0.333 */
+  saving: number;
+}
+
+/** Models offered as batches, biggest saving first. Savings are against our own real-time price. */
+export function batchDeals(prices: PublicPrice[]): BatchDeal[] {
+  return prices
+    .filter((p) => p.batch && p.input > 0)
+    .map((p) => ({
+      model: p.model,
+      vendor: p.vendor,
+      realtime: { input: p.input, output: p.output },
+      batch: p.batch!,
+      saving: Math.max(0, 1 - p.batch!.input / p.input),
+    }))
+    .filter((d) => d.saving > 0)
+    .sort((a, b) => b.saving - a.saving || a.model.localeCompare(b.model));
+}
+
+/** Whole-percent headline saving ("up to N%"), or null when no model has a batch discount. */
+export function maxBatchSaving(deals: BatchDeal[]): number | null {
+  return deals.length ? Math.floor(deals[0].saving * 100) : null;
+}

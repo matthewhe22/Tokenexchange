@@ -12,6 +12,7 @@ export async function SiteHeader() {
           <span className="logo-mark">⇄</span> TokenExchange
         </Link>
         <nav className="row site-nav">
+          <Link href="/batch">{t["nav.batch"]}</Link>
           <Link href="/pricing">{t["nav.pricing"]}</Link>
           <Link href="/docs">{t["nav.docs"]}</Link>
           <LangSwitch current={locale} label={t["lang.label"]} />
@@ -36,6 +37,7 @@ export async function SiteFooter() {
       <div className="site-inner row" style={{ justifyContent: "space-between" }}>
         <span className="muted">© {new Date().getFullYear()} TokenExchange</span>
         <nav className="row">
+          <Link href="/batch">{t["nav.batch"]}</Link>
           <Link href="/pricing">{t["nav.pricing"]}</Link>
           <Link href="/docs">{t["nav.docs"]}</Link>
           <Link href="/terms">{t["footer.terms"]}</Link>

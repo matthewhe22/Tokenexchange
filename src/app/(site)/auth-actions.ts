@@ -47,8 +47,8 @@ async function sendVerification(userId: number, email: string) {
   const token = await issueAuthToken(userId, "verify_email", 24 * HOUR);
   await sendEmail({
     to: email,
-    subject: "Verify your TokenExchange email",
-    text: `Welcome to TokenExchange!\n\nConfirm your email address to start creating API keys:\n${appUrl()}/verify-email?token=${token}\n\nThis link expires in 24 hours.`,
+    subject: "Verify your Tenon email",
+    text: `Welcome to Tenon!\n\nConfirm your email address to start creating API keys:\n${appUrl()}/verify-email?token=${token}\n\nThis link expires in 24 hours.`,
   });
 }
 
@@ -102,7 +102,7 @@ export async function verifyTwoFactor(_prev: FormState | undefined, form: FormDa
     if (fails.count === TWO_FA_MAX_FAILURES) {
       await sendEmail({
         to: user.email,
-        subject: "Repeated failed sign-in attempts on your TokenExchange account",
+        subject: "Repeated failed sign-in attempts on your Tenon account",
         text: `Someone entered your password correctly but failed the two-factor code ${TWO_FA_MAX_FAILURES} times. Sign-in is paused for an hour.\n\nIf this was not you, change your password now: ${appUrl()}/forgot-password`,
       }).catch(() => {});
     }
@@ -163,7 +163,7 @@ export async function requestPasswordReset(_prev: FormState | undefined, form: F
     const token = await issueAuthToken(user.id, "reset_password", HOUR);
     await sendEmail({
       to: email,
-      subject: "Reset your TokenExchange password",
+      subject: "Reset your Tenon password",
       text: `Someone asked to reset the password for this account.\n\nChoose a new password here:\n${appUrl()}/reset-password?token=${token}\n\nThe link expires in 1 hour. If this wasn't you, ignore this email.`,
     });
   }

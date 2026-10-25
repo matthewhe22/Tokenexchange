@@ -1,4 +1,4 @@
-// Tenon (榫卯) brand mark: a beam whose tenon sits inside a post. Small sizes use a simplified, heavier
+// Tenon brand mark: a beam whose tenon sits inside a post. Small sizes use a simplified, heavier
 // drawing so the joint still reads at favicon and nav sizes. Colors are fixed brand colors, not theme tokens,
 // so the mark looks the same on light and dark surfaces.
 const WALNUT = "#2F211B";
@@ -27,13 +27,12 @@ export function TenonMark({ size = 28, title }: { size?: number; title?: string 
   );
 }
 
-/** Mark plus wordmark. The Chinese name is shown next to the Latin one in both locales. */
-export function TenonLogo({ size = 28, zh = true }: { size?: number; zh?: boolean }) {
+/** Mark plus wordmark. The logo is Latin-only in every locale. */
+export function TenonLogo({ size = 28 }: { size?: number }) {
   return (
     <span className="logo-lockup" style={{ fontSize: Math.round(size * 0.72) }}>
       <TenonMark size={size} />
       <span className="logo-word">Tenon</span>
-      {zh && <span className="logo-zh">榫卯</span>}
     </span>
   );
 }

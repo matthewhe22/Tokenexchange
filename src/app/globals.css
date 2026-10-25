@@ -1,4 +1,4 @@
-/* Tenon (榫卯) theme. Walnut text on pale wood, huanghuali gold for actions. --accent is a fill colour
+/* Tenon theme. Walnut text on pale wood, huanghuali gold for actions. --accent is a fill colour
    (buttons, bars) and always carries --accent-ink text; use --link for coloured text, which keeps 4.5:1. */
 :root {
   --bg: #f7f4f0;
@@ -94,7 +94,6 @@ button.danger { border-color: var(--danger); background: transparent; color: var
 .logo-lockup { display: inline-flex; align-items: center; gap: 0.45em; font-family: var(--font-heading); font-weight: 700; line-height: 1; white-space: nowrap; }
 .logo-mark { display: block; flex-shrink: 0; }
 .logo-word { letter-spacing: -0.02em; }
-.logo-zh { font-family: var(--font-sans); font-weight: 600; font-size: 0.62em; color: var(--muted); letter-spacing: 0.12em; }
 .site-nav { gap: 18px; }
 .site-nav a:not(.btn) { color: var(--text); }
 .site-footer { border-top: 1px solid var(--border); padding: 24px 0; margin-top: 48px; }

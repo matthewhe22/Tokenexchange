@@ -1,4 +1,4 @@
-# Tenon 榫卯
+# Tenon
 
 A token wholesale and resale platform, branded **Tenon** (see [docs/BRAND.md](docs/BRAND.md); the codebase and API
 identifiers keep the original name, TokenExchange). You buy model capacity upstream, and customers use one API key

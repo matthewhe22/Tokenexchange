@@ -2,7 +2,7 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "Tenon 榫卯",
+    name: "Tenon",
     short_name: "Tenon",
     description: "One API key for every frontier model.",
     start_url: "/dashboard",

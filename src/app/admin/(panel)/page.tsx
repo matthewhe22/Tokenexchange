@@ -1,6 +1,8 @@
 import { desc, gte, sql } from "drizzle-orm";
 import { getDb, schema } from "@/db";
 import { fixedCostsBySource } from "@/lib/capacity";
+import { compareWithBenchmark } from "@/lib/benchmark";
+import { getPrices } from "@/lib/billing";
 import { formatUsd } from "@/lib/money";
 import { formatDateTime, startOfToday, tzLabel } from "@/lib/time";
 
@@ -33,6 +35,8 @@ export default async function Dashboard() {
     .groupBy(schema.channels.source);
 
   const channels = await db.select().from(schema.channels).orderBy(desc(schema.channels.failCount));
+  const { rows: benchmark } = await compareWithBenchmark([...(await getPrices()).values()]);
+  const overpriced = benchmark.filter((r) => r.diff != null && r.diff > 0.02).length;
   // Committed capacity costs the same whether used or not: count today's share of it.
   const fixed = await fixedCostsBySource(since, new Date());
   const fixedTotal = [...fixed.values()].reduce((a, b) => a + b, 0);
@@ -47,6 +51,11 @@ export default async function Dashboard() {
   return (
     <>
       <h1>Today (Melbourne, {tzLabel()})</h1>
+      {overpriced > 0 && (
+        <div className="notice">
+          {overpriced} model(s) are priced above OpenRouter for the same model. <a href="/admin/models">Review prices</a>
+        </div>
+      )}
       <div className="grid">
         <Stat label="Requests" value={String(today.requests)} />
         <Stat label="Errors" value={String(today.errors)} />

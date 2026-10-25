@@ -1,0 +1,1 @@
+ALTER TABLE "model_prices" ADD COLUMN "benchmark_id" text;

@@ -92,6 +92,16 @@ export function startMockUpstream(port: number): Promise<{ received: Received[];
 
     if (path === "/broken/v1/chat/completions") return json(500, { error: { message: "boom" } });
 
+    // OpenRouter's public model list, for the price benchmark.
+    if (path === "/openrouter/api/v1/models") {
+      return json(200, {
+        data: [
+          { id: "acme/gpt-test", pricing: { prompt: "0.0000015", completion: "0.000006" } },
+          { id: "acme/oss-model", pricing: { prompt: "0.000002", completion: "0.000004" } },
+        ],
+      });
+    }
+
     // Upstream price catalogs: DeepInfra's public list (at the API root) and Novita's /models.
     if (path === "/models/list") {
       return json(200, [

@@ -31,7 +31,7 @@ describe("upstream catalogs", () => {
 });
 
 describe("per-model upstream costs", () => {
-  const price = { model: "llama", inputPrice: 0.135, outputPrice: 0.4, cacheReadPrice: null, cacheWritePrice: null, markup: 1, maxOutputTokens: null, tierThreshold: null, tierInputPrice: null, tierOutputPrice: null, perRequestPrice: null, flexMarkup: null, batchMarkup: 0.8, priorityMultiplier: null, enabled: true, updatedAt: new Date() };
+  const price = { model: "llama", inputPrice: 0.135, outputPrice: 0.4, cacheReadPrice: null, cacheWritePrice: null, markup: 1, maxOutputTokens: null, tierThreshold: null, tierInputPrice: null, tierOutputPrice: null, perRequestPrice: null, flexMarkup: null, batchMarkup: 0.8, priorityMultiplier: null, benchmarkId: null, enabled: true, updatedAt: new Date() };
   const u = { input: 3_000_000, output: 1_000_000, cacheRead: 0, cacheWrite: 0 };
   const deepinfra = { costMultiplier: 1, modelCosts: { llama: { input: 0.1, output: 0.32 } }, config: { batchCostFactor: "0.8" } };
 

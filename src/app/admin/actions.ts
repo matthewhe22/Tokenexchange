@@ -183,6 +183,7 @@ export async function savePrice(form: FormData) {
     flexMarkup: opt("flexMarkup"),
     batchMarkup: opt("batchMarkup"),
     priorityMultiplier: opt("priorityMultiplier"),
+    benchmarkId: str(form, "benchmarkId") || null,
     enabled: form.get("enabled") === "on",
     updatedAt: new Date(),
   };

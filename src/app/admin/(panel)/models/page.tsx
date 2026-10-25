@@ -1,6 +1,41 @@
 import { asc } from "drizzle-orm";
 import { getDb, schema } from "@/db";
 import { deletePrice, savePrice } from "../../actions";
+import { compareWithBenchmark, type PriceComparison } from "@/lib/benchmark";
+import { perMillion } from "@/lib/catalog";
+
+const pct = (d: number | null) => (d == null ? "—" : `${d > 0 ? "+" : ""}${(d * 100).toFixed(0)}%`);
+const pair = (p: { input: number; output: number } | null) => (p ? `${perMillion(p.input)} / ${perMillion(p.output)}` : "—");
+
+function DiffBadge({ d }: { d: number | null }) {
+  if (d == null) return <span className="muted">—</span>;
+  // Within ±2% counts as level with the market.
+  return <span className={d > 0.02 ? "badge off" : "badge ok"}>{pct(d)}</span>;
+}
+
+function BenchmarkTable({ rows }: { rows: PriceComparison[] }) {
+  return (
+    <div className="card scroll">
+      <table>
+        <thead>
+          <tr><th>Model</th><th>Our price in / out</th><th>OpenRouter in / out</th><th>vs OpenRouter</th><th>Our batch</th><th>Batch vs OpenRouter</th></tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.model}>
+              <td className="mono">{r.model}</td>
+              <td>{pair(r.ours)}</td>
+              <td>{r.bench ? <><span>{pair(r.bench)}</span><div className="muted mono" style={{ fontSize: 11 }}>{r.bench.id}</div></> : <span className="muted">no match — set the OpenRouter id below</span>}</td>
+              <td><DiffBadge d={r.diff} /></td>
+              <td>{pair(r.batch)}</td>
+              <td><DiffBadge d={r.batchDiff} /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
 type Price = typeof schema.modelPrices.$inferSelect;
 
@@ -20,6 +55,7 @@ function PriceFields({ p }: { p?: Price }) {
       <div><label>Per unit $ (image / search / minute)</label><input name="perRequestPrice" type="number" step="any" defaultValue={v(p?.perRequestPrice)} /></div>
       <div><label>Batch markup (× list; upstream pays 0.5×)</label><input name="batchMarkup" type="number" step="any" placeholder="e.g. 0.8 — blank = no batch" defaultValue={v(p?.batchMarkup)} /></div>
       <div><label>Flex markup (× list; OpenAI only, upstream 0.5×)</label><input name="flexMarkup" type="number" step="any" placeholder="e.g. 0.8 — blank = no flex" defaultValue={v(p?.flexMarkup)} /></div>
+      <div><label>OpenRouter id to compare with (blank = match by name)</label><input name="benchmarkId" placeholder="e.g. meta-llama/llama-4-scout" defaultValue={p?.benchmarkId ?? ""} /></div>
       <div><label>Priority price (× list, OpenAI&apos;s ratio)</label><input name="priorityMultiplier" type="number" step="any" placeholder="e.g. 1.8 — blank = no priority" defaultValue={v(p?.priorityMultiplier)} /></div>
     </>
   );
@@ -27,6 +63,8 @@ function PriceFields({ p }: { p?: Price }) {
 
 export default async function ModelsPage() {
   const prices = await getDb().select().from(schema.modelPrices).orderBy(asc(schema.modelPrices.model));
+  const benchmark = await compareWithBenchmark(prices);
+  const above = benchmark.rows.filter((r) => r.diff != null && r.diff > 0.02).length;
   return (
     <>
       <h1>Models &amp; prices</h1>
@@ -43,6 +81,24 @@ export default async function ModelsPage() {
         priority multiple × markup. A <span className="mono">service_tier</span> the model is not offered on is removed from the
         request, so customers can never trigger a higher upstream price than they are billed.
       </p>
+      <details className="card" open={above > 0}>
+        <summary style={{ cursor: "pointer" }}>
+          <strong>Compared with OpenRouter</strong>{" "}
+          {benchmark.error ? (
+            <span className="badge off">unavailable</span>
+          ) : above > 0 ? (
+            <span className="badge off">{above} model(s) priced above OpenRouter</span>
+          ) : (
+            <span className="badge ok">no model priced above OpenRouter</span>
+          )}
+        </summary>
+        <p className="muted" style={{ marginTop: 8 }}>
+          OpenRouter&apos;s public list prices (refreshed hourly), compared at 3 input tokens per output token. OpenRouter also
+          charges a fee on card top-ups, which this ignores. Batch prices are compared with OpenRouter&apos;s real-time price.
+          Models are matched by name; set the OpenRouter id on a model when the match is missing or wrong.
+        </p>
+        {benchmark.error ? <div className="notice error">{benchmark.error}</div> : <BenchmarkTable rows={benchmark.rows} />}
+      </details>
       {prices.map((p) => (
         <details key={p.model} className="card">
           <summary className="row" style={{ cursor: "pointer", justifyContent: "space-between" }}>

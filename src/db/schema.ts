@@ -147,6 +147,8 @@ export const modelPrices = pgTable("model_prices", {
   // OpenAI priority processing: the vendor's priority price as a multiple of list (e.g. 1.8).
   // Customers pay that times `markup`. null = priority not offered, the request runs as standard.
   priorityMultiplier: doublePrecision("priority_multiplier"),
+  // OpenRouter model id to compare prices against (e.g. meta-llama/llama-4-scout); null = match by name.
+  benchmarkId: text("benchmark_id"),
   enabled: boolean("enabled").notNull().default(true),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

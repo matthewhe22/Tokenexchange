@@ -72,7 +72,7 @@ Billing: customer price = list price × model `markup`; upstream cost = list pri
   reports. Anthropic's `service_tier` is always removed.
 - **Batches** run on OpenAI, Azure OpenAI and Anthropic channels, and on OpenAI-compatible relays with
   "Batch API: On" (DeepInfra, Novita). The upstream is assumed to charge half of list; set a channel's
-  "Upstream batch price ÷ list" when it differs (DeepInfra: 0.8). Batches are and are billed at the model's batch
+  "Upstream batch price ÷ list" when it differs (DeepInfra: 0.8). Batches are billed at the model's batch
   markup (e.g. 0.8 = list − 20%). Each batch is held against the balance for up to 48 hours. It is refreshed whenever
   the customer polls it and by the maintenance job, and billed once it ends. Bedrock / Vertex / Gemini batches (which
   need S3 / GCS) are not supported. Uploaded input files are kept for 30 days.

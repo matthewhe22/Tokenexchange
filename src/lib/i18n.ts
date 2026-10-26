@@ -1,4 +1,4 @@
-import { cookies, headers } from "next/headers";
+import { cookies } from "next/headers";
 
 export const LOCALES = ["en", "zh"] as const;
 export type Locale = (typeof LOCALES)[number];
@@ -254,11 +254,10 @@ const zh: Dict = {
 
 const DICTS: Record<Locale, Dict> = { en, zh };
 
+// English unless the visitor picked Chinese with the language switch; the browser's language is ignored.
 export async function getLocale(): Promise<Locale> {
   const fromCookie = (await cookies()).get("lang")?.value;
-  if (fromCookie === "en" || fromCookie === "zh") return fromCookie;
-  const accept = (await headers()).get("accept-language") ?? "";
-  return /^zh\b|,\s*zh\b/i.test(accept) ? "zh" : "en";
+  return fromCookie === "zh" ? "zh" : "en";
 }
 
 export async function getDict(): Promise<Dict> {

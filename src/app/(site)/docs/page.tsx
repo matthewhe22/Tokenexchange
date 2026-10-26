@@ -21,6 +21,7 @@ export default async function DocsPage() {
         <a href="#tools">Coding tools</a>
         <a href="#errors">Errors</a>
         <a href="#limits">Limits</a>
+        <Link href="/guides">Guides</Link>
       </aside>
       <article>
         <h1 className="page-title">Documentation</h1>
@@ -63,12 +64,13 @@ export default async function DocsPage() {
           Asynchronous jobs at discounted batch rates, through the OpenAI Files + Batches API (<code>/v1/files</code>,
           <code> /v1/batches</code>) and Anthropic Message Batches (<code>/v1/messages/batches</code>). Up to 50,000 requests per
           batch; results within 24 hours; you pay only for requests that complete. Prices and a quick start are on the{" "}
-          <Link href="/batch">Batch API page</Link>.
+          <Link href="/batch">Batch API page</Link>; a full walkthrough is in the <Link href="/guides/openai-batch-api">Batch API guide</Link>.
         </p>
         <SdkTabs tabs={batchSnippets(examples.batch.openai, examples.batch.anthropic)} />
 
         <h2 id="tools">Coding tools</h2>
         <h3>Claude Code</h3>
+        <p className="muted">Model choice and a permanent setup are in the <Link href="/guides/claude-code">Claude Code guide</Link>.</p>
         <CodeBlock code={`export ANTHROPIC_BASE_URL=${base}\nexport ANTHROPIC_AUTH_TOKEN=sk-tx-...\nclaude`} />
         <h3>Codex CLI</h3>
         <p className="muted">Add a provider to <code>~/.codex/config.toml</code>, then export <code>TENON_API_KEY</code>:</p>

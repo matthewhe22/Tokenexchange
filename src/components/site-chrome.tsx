@@ -44,6 +44,7 @@ export async function SiteFooter() {
           <Link href="/batch">{t["nav.batch"]}</Link>
           <Link href="/pricing">{t["nav.pricing"]}</Link>
           <Link href="/docs">{t["nav.docs"]}</Link>
+          <Link href="/guides">{t["nav.guides"]}</Link>
           <Link href="/terms">{t["footer.terms"]}</Link>
           <Link href="/privacy">{t["footer.privacy"]}</Link>
         </nav>

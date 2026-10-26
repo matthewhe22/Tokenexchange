@@ -83,6 +83,7 @@ export default async function BatchPage() {
       <section id="quick-start" className="site-inner section">
         <h2 className="section-title">{t["batch.ctaDocs"]}</h2>
         <SdkTabs tabs={batchSnippets(examples.batch.openai, examples.batch.anthropic)} />
+        <p className="muted"><Link href="/guides/openai-batch-api">{t["batch.guide"]}</Link></p>
       </section>
 
       <section className="site-inner section">

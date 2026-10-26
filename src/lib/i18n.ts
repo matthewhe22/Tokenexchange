@@ -6,6 +6,7 @@ export type Locale = (typeof LOCALES)[number];
 const en = {
   "nav.pricing": "Pricing",
   "nav.docs": "Docs",
+  "nav.guides": "Guides",
   "nav.signin": "Sign in",
   "nav.getKey": "Get API key",
   "nav.console": "Console",
@@ -81,6 +82,7 @@ const en = {
   "dash.admin": "Admin console",
   "dash.signout": "Sign out",
   "nav.batch": "Batch API",
+  "batch.guide": "Step-by-step guide: polling, results and retries →",
   "batch.badge": "Batch API",
   "batch.promoTitle": "Run it as a batch and pay up to {pct}% less",
   "batch.promoTitleNoPct": "Run it as a batch and pay less",
@@ -132,6 +134,7 @@ export type MessageKey = keyof Dict;
 const zh: Dict = {
   "nav.pricing": "价格",
   "nav.docs": "文档",
+  "nav.guides": "指南",
   "nav.signin": "登录",
   "nav.getKey": "获取 API Key",
   "nav.console": "控制台",
@@ -207,6 +210,7 @@ const zh: Dict = {
   "dash.admin": "管理后台",
   "dash.signout": "退出登录",
   "nav.batch": "Batch 批量",
+  "batch.guide": "分步教程：轮询、读取结果与重试 →",
   "batch.badge": "Batch API",
   "batch.promoTitle": "改用批量处理，最多省 {pct}%",
   "batch.promoTitleNoPct": "改用批量处理，更省钱",

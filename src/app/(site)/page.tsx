@@ -1,13 +1,22 @@
 import Link from "next/link";
+import { JsonLd, faqJsonLd } from "@/components/json-ld";
+import { pageMetadata, SITE_NAME } from "@/lib/seo";
+import { appUrl } from "@/lib/url";
 import { SdkTabs } from "@/components/sdk-tabs";
-import { batchDeals, maxBatchSaving, perMillion, publicPriceList } from "@/lib/catalog";
+import { batchDeals, maxBatchSaving, perMillion, publicPriceList, snippetModels } from "@/lib/catalog";
 import { getDict } from "@/lib/i18n";
 import { sdkSnippets } from "@/lib/snippets";
+
+export const metadata = pageMetadata({
+  path: "/",
+  description:
+    "One API key for GPT, Claude, Gemini, DeepSeek, Llama and Qwen. OpenAI- and Anthropic-compatible, pay per token with no subscription, plus a discounted Batch API.",
+});
 
 const TOOLS = ["Claude Code", "Codex CLI", "Cursor", "Cline", "LangChain", "LlamaIndex", "Vercel AI SDK", "LiteLLM"];
 
 export default async function Home() {
-  const [prices, t] = await Promise.all([publicPriceList(), getDict()]);
+  const [prices, t, examples] = await Promise.all([publicPriceList(), getDict(), snippetModels()]);
   const features = ([1, 2, 3, 4] as const).map((i) => ({ title: t[`home.f${i}.title`], body: t[`home.f${i}.body`] }));
   const featured = prices.filter((p) => p.vendor !== "Other").slice(0, 6);
   const deals = batchDeals(prices);
@@ -23,7 +32,7 @@ export default async function Home() {
           <Link href="/docs" className="btn btn-lg btn-ghost">{t["home.ctaDocs"]}</Link>
         </div>
         <div className="hero-code">
-          <SdkTabs tabs={sdkSnippets()} />
+          <SdkTabs tabs={sdkSnippets(examples.live)} />
         </div>
       </section>
 
@@ -111,6 +120,13 @@ export default async function Home() {
         </div>
       </section>
 
+      <JsonLd
+        data={[
+          { "@context": "https://schema.org", "@type": "Organization", name: SITE_NAME, url: appUrl(), logo: `${appUrl()}/apple-icon.png` },
+          { "@context": "https://schema.org", "@type": "WebSite", name: SITE_NAME, url: appUrl() },
+          faqJsonLd(([1, 2, 3, 4] as const).map((i) => ({ q: t[`home.q${i}`], a: t[`home.a${i}`] }))),
+        ]}
+      />
       <section className="site-inner section cta-band card">
         <h2 className="section-title" style={{ margin: 0 }}>{t["home.cta"]}</h2>
         <Link href="/signup" className="btn btn-lg">{t["home.ctaButton"]}</Link>

@@ -1,4 +1,5 @@
-export const metadata = { title: "Privacy Policy" };
+import { pageMetadata } from "@/lib/seo";
+export const metadata = pageMetadata({ path: "/privacy", title: "Privacy Policy", description: "What Tenon collects, why, and how long it is kept. Request and response content is not stored." });
 
 // TEMPLATE: have qualified counsel review and adapt before launch (GDPR/CCPA specifics, contact details).
 export default function PrivacyPage() {

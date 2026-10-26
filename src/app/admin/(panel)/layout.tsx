@@ -1,3 +1,4 @@
+import { PRIVATE_METADATA } from "@/lib/seo";
 import Link from "next/link";
 import { TenonLogo } from "@/components/logo";
 import { requireAdmin } from "@/lib/session";
@@ -5,6 +6,7 @@ import { logout } from "@/app/(site)/auth-actions";
 import { formatDateTime, tzLabel } from "@/lib/time";
 
 export const dynamic = "force-dynamic";
+export const metadata = PRIVATE_METADATA;
 
 export default async function PanelLayout({ children }: { children: React.ReactNode }) {
   const admin = await requireAdmin();

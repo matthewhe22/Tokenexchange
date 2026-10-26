@@ -1,8 +1,9 @@
+import { pageMetadata } from "@/lib/seo";
 import Link from "next/link";
 import { batchDeals, maxBatchSaving, perMillion, publicPriceList, type Vendor } from "@/lib/catalog";
 import { getDict } from "@/lib/i18n";
 
-export const metadata = { title: "Pricing" };
+export const metadata = pageMetadata({ path: "/pricing", title: "Pricing", description: "Per-token prices in USD for every model on Tenon: input, cached input and output per 1M tokens, plus discounted batch rates. No subscription; top up from $5." });
 
 export default async function PricingPage() {
   const [prices, t] = await Promise.all([publicPriceList(), getDict()]);

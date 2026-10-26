@@ -1,8 +1,9 @@
+import { pageMetadata } from "@/lib/seo";
 import { getDict } from "@/lib/i18n";
 import { LoginForm, OAuthButtons } from "@/components/auth-forms";
 import { enabledOAuthProviders } from "@/lib/oauth";
 
-export const metadata = { title: "Sign in" };
+export const metadata = pageMetadata({ path: "/login", title: "Sign in", description: "Sign in to the Tenon console to manage API keys, usage and billing.", index: false });
 
 const ERRORS: Record<string, string> = {
   oauth: "Sign-in was cancelled or expired. Please try again.",

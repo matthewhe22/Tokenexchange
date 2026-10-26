@@ -1,8 +1,9 @@
+import { pageMetadata } from "@/lib/seo";
 import { getDict } from "@/lib/i18n";
 import Link from "next/link";
 import { ResetPasswordForm } from "@/components/auth-forms";
 
-export const metadata = { title: "Choose a new password" };
+export const metadata = pageMetadata({ path: "/reset-password", title: "Choose a new password", description: "Choose a new password for your Tenon account.", index: false });
 
 export default async function ResetPasswordPage({ searchParams }: { searchParams: Promise<{ token?: string }> }) {
   const { token } = await searchParams;

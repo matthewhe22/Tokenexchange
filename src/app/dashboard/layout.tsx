@@ -1,3 +1,4 @@
+import { PRIVATE_METADATA } from "@/lib/seo";
 import { getDict } from "@/lib/i18n";
 import Link from "next/link";
 import { TenonLogo } from "@/components/logo";
@@ -5,6 +6,7 @@ import { logout } from "@/app/(site)/auth-actions";
 import { requireUser } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
+export const metadata = PRIVATE_METADATA;
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const user = await requireUser();

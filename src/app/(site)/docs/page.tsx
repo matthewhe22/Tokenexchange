@@ -1,13 +1,16 @@
+import { pageMetadata } from "@/lib/seo";
 import Link from "next/link";
 import { CodeBlock } from "@/components/code-block";
 import { SdkTabs } from "@/components/sdk-tabs";
 import { batchSnippets, sdkSnippets } from "@/lib/snippets";
+import { snippetModels } from "@/lib/catalog";
 import { appUrl } from "@/lib/url";
 
-export const metadata = { title: "Docs" };
+export const metadata = pageMetadata({ path: "/docs", title: "Docs", description: "Connect to Tenon with the OpenAI, Anthropic or Gemini SDK, Claude Code, Codex CLI or curl: endpoints, authentication, the Batch API, errors and limits." });
 
-export default function DocsPage() {
+export default async function DocsPage() {
   const base = appUrl();
+  const examples = await snippetModels();
   return (
     <div className="site-inner section docs">
       <aside className="docs-toc">
@@ -53,7 +56,7 @@ export default function DocsPage() {
         </p>
 
         <h2 id="sdks">SDK examples</h2>
-        <SdkTabs tabs={sdkSnippets()} />
+        <SdkTabs tabs={sdkSnippets(examples.live)} />
 
         <h2 id="batch">Batch API</h2>
         <p>
@@ -62,7 +65,7 @@ export default function DocsPage() {
           batch; results within 24 hours; you pay only for requests that complete. Prices and a quick start are on the{" "}
           <Link href="/batch">Batch API page</Link>.
         </p>
-        <SdkTabs tabs={batchSnippets()} />
+        <SdkTabs tabs={batchSnippets(examples.batch.openai, examples.batch.anthropic)} />
 
         <h2 id="tools">Coding tools</h2>
         <h3>Claude Code</h3>

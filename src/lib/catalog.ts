@@ -1,5 +1,6 @@
 import { getPrices, type ModelPrice } from "./billing";
 import { servedModels } from "./channels";
+import type { SnippetModels } from "./snippets";
 
 export type Vendor = "OpenAI" | "Anthropic" | "Google" | "Other";
 
@@ -84,4 +85,28 @@ export function batchDeals(prices: PublicPrice[]): BatchDeal[] {
 /** Whole-percent headline saving ("up to N%"), or null when no model has a batch discount. */
 export function maxBatchSaving(deals: BatchDeal[]): number | null {
   return deals.length ? Math.floor(deals[0].saving * 100) : null;
+}
+
+/** First model in `models` (in price-list order) matching `prefer`, else the first one at all. */
+function pick(order: string[], models: Set<string>, prefer: RegExp): string | undefined {
+  const served = order.filter((m) => models.has(m));
+  return served.find((m) => prefer.test(m)) ?? served[0];
+}
+
+/** Models to show in the SDK examples: ones customers can really call through each API. */
+export async function snippetModels(): Promise<{ live: SnippetModels; batch: { openai?: string; anthropic?: string } }> {
+  const [prices, served] = await Promise.all([publicPriceList(), servedModels()]);
+  const order = prices.map((p) => p.model);
+  const batchOrder = prices.filter((p) => p.batch).map((p) => p.model);
+  return {
+    live: {
+      openai: pick(order, served.byApi.openai, /^gpt-/),
+      anthropic: pick(order, served.byApi.anthropic, /^claude-/),
+      gemini: pick(order, served.byApi.gemini, /^gemini-/),
+    },
+    batch: {
+      openai: pick(batchOrder, served.batchByApi.openai, /^gpt-/),
+      anthropic: pick(batchOrder, served.batchByApi.anthropic, /^claude-/),
+    },
+  };
 }

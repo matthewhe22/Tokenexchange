@@ -1,9 +1,10 @@
+import { pageMetadata } from "@/lib/seo";
 import { getDict } from "@/lib/i18n";
 import Link from "next/link";
 import { TwoFactorForm } from "@/components/auth-forms";
 import { readPendingTwoFactor } from "@/lib/session";
 
-export const metadata = { title: "Two-factor authentication" };
+export const metadata = pageMetadata({ path: "/login/2fa", title: "Two-factor authentication", description: "Enter your two-factor authentication code.", index: false });
 
 export default async function TwoFactorPage({ searchParams }: { searchParams: Promise<{ next?: string }> }) {
   const { next } = await searchParams;

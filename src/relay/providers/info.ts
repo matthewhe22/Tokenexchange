@@ -78,7 +78,7 @@ export const PROVIDER_INFO: Record<
     defaultSource: "reseller",
     protocols: ["anthropic-messages"],
     credentialFields: ["apiKey"],
-    configFields: ["extraHeaders", "batch", "batchCostFactor"],
+    configFields: ["catalog", "extraHeaders", "batch", "batchCostFactor"],
     baseUrlHint: "https://relay.example.com",
   },
 };
@@ -111,6 +111,15 @@ export const CHANNEL_PRESETS: Record<
     baseUrl: "https://api.deepinfra.com/v1/openai",
     config: { catalog: "deepinfra", batch: "on", batchCostFactor: "0.8" },
     note: "Batches are billed at 80% of DeepInfra's price. DeepInfra's terms forbid reselling without a written agreement.",
+  },
+  "deepinfra-anthropic": {
+    name: "DeepInfra (Anthropic API)",
+    provider: "anthropic_compatible",
+    source: "reseller",
+    baseUrl: "https://api.deepinfra.com/anthropic",
+    config: { catalog: "deepinfra" },
+    note:
+      "DeepInfra's Anthropic Messages endpoint, for the Anthropic SDK and Claude Code (/v1/messages). Add it alongside the OpenAI-compatible DeepInfra channel and import the same models with the same public names.",
   },
   novita: {
     name: "Novita AI",

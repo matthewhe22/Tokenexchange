@@ -1,9 +1,10 @@
+import { pageMetadata } from "@/lib/seo";
 import { eq } from "drizzle-orm";
 import Link from "next/link";
 import { getDb, schema } from "@/db";
 import { consumeAuthToken } from "@/lib/auth-tokens";
 
-export const metadata = { title: "Verify email" };
+export const metadata = pageMetadata({ path: "/verify-email", title: "Verify email", description: "Confirm the email address of your Tenon account.", index: false });
 
 export default async function VerifyEmailPage({ searchParams }: { searchParams: Promise<{ token?: string }> }) {
   const { token } = await searchParams;

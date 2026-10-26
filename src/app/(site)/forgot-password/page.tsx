@@ -1,8 +1,9 @@
+import { pageMetadata } from "@/lib/seo";
 import { getDict } from "@/lib/i18n";
 import { ForgotPasswordForm } from "@/components/auth-forms";
 import { turnstileSiteKey } from "@/lib/turnstile";
 
-export const metadata = { title: "Reset password" };
+export const metadata = pageMetadata({ path: "/forgot-password", title: "Reset password", description: "Reset the password of your Tenon account.", index: false });
 
 export default async function ForgotPasswordPage() {
   const t = await getDict();

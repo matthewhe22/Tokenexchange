@@ -1,53 +1,72 @@
 import { appUrl } from "./url";
 
-export function sdkSnippets() {
+/** Model shown in each SDK example; an SDK without a model is left out (nothing serves it). */
+export interface SnippetModels {
+  openai?: string;
+  anthropic?: string;
+  gemini?: string;
+}
+
+const DEFAULT_MODELS: SnippetModels = { openai: "gpt-4o-mini", anthropic: "claude-sonnet-4-5", gemini: "gemini-2.5-flash" };
+
+export function sdkSnippets(served: SnippetModels = DEFAULT_MODELS) {
   const base = appUrl();
-  return [
+  // Before any channel serves anything (a fresh install), show the generic examples.
+  const models = served.openai || served.anthropic || served.gemini ? served : DEFAULT_MODELS;
+  const tabs = [
     {
+      api: "openai" as const,
       label: "OpenAI SDK",
       code: `from openai import OpenAI
 
 client = OpenAI(base_url="${base}/v1", api_key="sk-tx-...")
 reply = client.chat.completions.create(
-    model="gpt-4o-mini",
+    model="${models.openai}",
     messages=[{"role": "user", "content": "Hello!"}],
 )
 print(reply.choices[0].message.content)`,
     },
     {
+      api: "anthropic" as const,
       label: "Anthropic SDK",
       code: `import anthropic
 
 client = anthropic.Anthropic(base_url="${base}", api_key="sk-tx-...")
 msg = client.messages.create(
-    model="claude-sonnet-4-5",
+    model="${models.anthropic}",
     max_tokens=1024,
     messages=[{"role": "user", "content": "Hello!"}],
 )
 print(msg.content[0].text)`,
     },
     {
+      api: "gemini" as const,
       label: "Gemini SDK",
       code: `from google import genai
 
 client = genai.Client(api_key="sk-tx-...", http_options={"base_url": "${base}"})
-resp = client.models.generate_content(model="gemini-2.5-flash", contents="Hello!")
+resp = client.models.generate_content(model="${models.gemini}", contents="Hello!")
 print(resp.text)`,
     },
     {
+      api: "openai" as const,
       label: "curl",
       code: `curl ${base}/v1/chat/completions \\
   -H "Authorization: Bearer sk-tx-..." \\
   -H "Content-Type: application/json" \\
-  -d '{"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "Hello!"}]}'`,
+  -d '{"model": "${models.openai}", "messages": [{"role": "user", "content": "Hello!"}]}'`,
     },
   ];
+  return tabs.filter((t) => models[t.api]).map(({ label, code }) => ({ label, code }));
 }
 
 /** Batch quick-start code for the OpenAI and Anthropic SDKs. */
-export function batchSnippets(model = "gpt-4.1-mini", claudeModel = "claude-haiku-4-5") {
+export function batchSnippets(openaiModel?: string, anthropicModel?: string) {
   const base = appUrl();
-  return [
+  const none = !openaiModel && !anthropicModel;
+  const model = none ? "gpt-4.1-mini" : openaiModel;
+  const claudeModel = none ? "claude-haiku-4-5" : anthropicModel;
+  const tabs = [
     {
       label: "OpenAI SDK",
       code: `from openai import OpenAI
@@ -96,4 +115,6 @@ if batch.processing_status == "ended":
         print(result.custom_id, result.result.type)`,
     },
   ];
+  // Leave out an API with no model to show (nothing serves batches through it).
+  return tabs.filter((t) => (t.label === "OpenAI SDK" ? model : claudeModel));
 }

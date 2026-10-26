@@ -1,22 +1,24 @@
 import type { Metadata } from "next";
+import { JsonLd, faqJsonLd } from "@/components/json-ld";
+import { pageMetadata } from "@/lib/seo";
 import Link from "next/link";
 import { SdkTabs } from "@/components/sdk-tabs";
-import { batchDeals, maxBatchSaving, perMillion, publicPriceList } from "@/lib/catalog";
+import { batchDeals, maxBatchSaving, perMillion, publicPriceList, snippetModels } from "@/lib/catalog";
 import { getDict } from "@/lib/i18n";
 import { batchSnippets } from "@/lib/snippets";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = pageMetadata({
+  path: "/batch",
   title: "Batch API",
-  description: "Run GPT, Claude and open-model requests as batches with the OpenAI and Anthropic SDKs, at discounted batch rates.",
-};
+  description:
+    "Run GPT, Claude and open-model requests as asynchronous batches with the OpenAI or Anthropic SDK, at discounted batch rates. Up to 50,000 requests per job, results within 24 hours.",
+});
 
 export default async function BatchPage() {
-  const [prices, t] = await Promise.all([publicPriceList(), getDict()]);
+  const [prices, t, examples] = await Promise.all([publicPriceList(), getDict(), snippetModels()]);
   const deals = batchDeals(prices);
   const pct = maxBatchSaving(deals);
   const withPct = (s: string) => s.replace("{pct}", String(pct));
-  const openaiModel = deals.find((d) => d.vendor === "OpenAI")?.model ?? deals.find((d) => d.vendor !== "Anthropic")?.model;
-  const claudeModel = deals.find((d) => d.vendor === "Anthropic")?.model;
   const features = ([1, 2, 3, 4, 5, 6] as const).map((i) => ({ title: t[`batch.f${i}.title`], body: t[`batch.f${i}.body`] }));
 
   return (
@@ -80,7 +82,7 @@ export default async function BatchPage() {
 
       <section id="quick-start" className="site-inner section">
         <h2 className="section-title">{t["batch.ctaDocs"]}</h2>
-        <SdkTabs tabs={batchSnippets(openaiModel, claudeModel)} />
+        <SdkTabs tabs={batchSnippets(examples.batch.openai, examples.batch.anthropic)} />
       </section>
 
       <section className="site-inner section">
@@ -106,6 +108,7 @@ export default async function BatchPage() {
         </div>
       </section>
 
+      <JsonLd data={faqJsonLd(([1, 2, 3] as const).map((i) => ({ q: t[`batch.faq${i}q`], a: t[`batch.faq${i}a`] })))} />
       <section className="site-inner section cta-band card">
         <h2 className="section-title" style={{ margin: 0 }}>{pct != null ? withPct(t["batch.promoTitle"]) : t["batch.promoTitleNoPct"]}</h2>
         <Link href="/signup" className="btn btn-lg">{t["home.ctaButton"]}</Link>

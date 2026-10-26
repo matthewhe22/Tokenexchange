@@ -1,4 +1,5 @@
-export const metadata = { title: "Terms of Service" };
+import { pageMetadata } from "@/lib/seo";
+export const metadata = pageMetadata({ path: "/terms", title: "Terms of Service", description: "The terms that apply to using Tenon and its API." });
 
 // TEMPLATE: have qualified counsel review and adapt before launch.
 export default function TermsPage() {

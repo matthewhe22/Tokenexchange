@@ -193,6 +193,24 @@ export async function savePrice(form: FormData) {
   revalidatePath("/admin/models");
 }
 
+/** Sets `markup` on every model whose name contains the given text (e.g. "claude-"). */
+export async function bulkSetMarkup(form: FormData) {
+  const admin = await requireAdmin();
+  const match = str(form, "match").toLowerCase();
+  const markup = num(form, "markup", NaN);
+  if (!match) throw new Error("enter the text model names must contain");
+  if (!Number.isFinite(markup) || markup < 0 || markup > 100) throw new Error("markup must be between 0 and 100");
+  const rows = await getDb()
+    .update(schema.modelPrices)
+    .set({ markup, updatedAt: new Date() })
+    .where(sql`position(${match} in lower(${schema.modelPrices.model})) > 0`)
+    .returning({ model: schema.modelPrices.model });
+  await audit(admin, "price.bulk_markup", `match:${match}`, { markup, models: rows.map((r) => r.model) });
+  invalidate("prices");
+  revalidatePath("/admin/models");
+  redirect(`/admin/models?updated=${rows.length}&match=${encodeURIComponent(match)}&markup=${markup}`);
+}
+
 export async function deletePrice(form: FormData) {
   const admin = await requireAdmin();
   await getDb().delete(schema.modelPrices).where(eq(schema.modelPrices.model, str(form, "model")));

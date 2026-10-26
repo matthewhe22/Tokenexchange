@@ -1,6 +1,6 @@
 import { asc } from "drizzle-orm";
 import { getDb, schema } from "@/db";
-import { deletePrice, savePrice } from "../../actions";
+import { bulkSetMarkup, deletePrice, savePrice } from "../../actions";
 import { compareWithBenchmark, type PriceComparison } from "@/lib/benchmark";
 import { perMillion } from "@/lib/catalog";
 
@@ -61,7 +61,8 @@ function PriceFields({ p }: { p?: Price }) {
   );
 }
 
-export default async function ModelsPage() {
+export default async function ModelsPage({ searchParams }: { searchParams: Promise<{ updated?: string; match?: string; markup?: string }> }) {
+  const done = await searchParams;
   const prices = await getDb().select().from(schema.modelPrices).orderBy(asc(schema.modelPrices.model));
   const benchmark = await compareWithBenchmark(prices);
   const above = benchmark.rows.filter((r) => r.diff != null && r.diff > 0.02).length;
@@ -81,6 +82,23 @@ export default async function ModelsPage() {
         priority multiple × markup. A <span className="mono">service_tier</span> the model is not offered on is removed from the
         request, so customers can never trigger a higher upstream price than they are billed.
       </p>
+      {done.updated != null && (
+        <div className="notice">
+          Set markup ×{done.markup} on {done.updated} model(s) matching &quot;{done.match}&quot;.
+        </div>
+      )}
+      <details className="card">
+        <summary style={{ cursor: "pointer" }}><strong>Set markup in bulk</strong></summary>
+        <form action={bulkSetMarkup} className="row" style={{ marginTop: 12, alignItems: "flex-end" }}>
+          <div><label>Model name contains</label><input name="match" required placeholder="claude-" /></div>
+          <div><label>Markup (×)</label><input name="markup" type="number" step="any" min="0" max="100" required defaultValue="1.06" /></div>
+          <button className="secondary">Apply</button>
+        </form>
+        <p className="muted" style={{ marginTop: 8 }}>
+          Applies to every model whose name contains the text, enabled or not (case-insensitive). Only the markup changes; batch,
+          flex and priority settings are left alone. Check the list below afterwards.
+        </p>
+      </details>
       <details className="card" open={above > 0}>
         <summary style={{ cursor: "pointer" }}>
           <strong>Compared with OpenRouter</strong>{" "}

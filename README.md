@@ -158,6 +158,31 @@ npx tsx scripts/e2e.ts          # end-to-end against mock upstreams (truncates e
    - Add channels, then use "Send test request" on each one.
    - Create a user, then create an API key for them.
 
+### Custom domain
+
+The canonical domain is **`mytenon.com`**; `tokenexchangeportal.vercel.app` stays as Vercel's
+production alias.
+
+1. **Vercel**: add `mytenon.com` and `www.mytenon.com` to the project (Settings → Domains) and
+   point `www` at the apex. Use the DNS values Vercel shows *for this project* — they differ per
+   project and per project age.
+2. **DNS**: in the `mytenon.com` Cloudflare zone add the apex `A` record and the `www` `CNAME`
+   Vercel gives you, with the proxy **off** (DNS only, grey cloud). Proxying Vercel through
+   Cloudflare needs care (orange cloud, SSL mode Full (strict)) and buys nothing here.
+3. **`APP_URL=https://mytenon.com`** in the Production environment (and Preview, if you want
+   preview links on the domain). Everything user-visible — emails, Stripe redirects, docs code
+   samples, `metadataBase` — derives from it via `appUrl()`.
+4. **Alias redirect**: `src/middleware.ts` sends browser traffic on the alias hosts to
+   `mytenon.com` with a 308. `/v1`, `/v1beta` and `/api` are exempt on every host, so API keys
+   handed out as `https://tokenexchangeportal.vercel.app/v1` and provider callbacks
+   (`/api/auth/*/callback`, `/api/stripe/webhook`) keep working untouched.
+5. **After the switch, in each console you own**:
+   - Stripe: the webhook endpoint stays valid as-is (that path is exempt). New endpoints should use the domain.
+   - Resend: verify `mytenon.com` (SPF/DKIM records) before changing `EMAIL_FROM` to `noreply@mytenon.com`.
+   - GitHub / Google OAuth: add `https://mytenon.com/api/auth/{github,google}/callback` to each app's
+     allowed callback URLs, or social sign-in fails with a redirect-URI mismatch.
+   - Cloudflare Turnstile: add `mytenon.com` to the widget's allowed hostnames, or sign-up fails.
+
 ### Vercel limits to know about
 
 - **Function duration**: relay routes set `maxDuration = 300` (the Hobby maximum). On Pro you can raise it to 800 in each `src/app/v1*/**/route.ts`. Streams that run past the limit are cut off.

@@ -1,6 +1,7 @@
 import { desc, eq } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import { getDb, schema } from "@/db";
+import { AdminPasswordReset } from "@/components/admin-password-reset";
 import { CreateKeyForm } from "@/components/create-key-form";
 import { formatUsd } from "@/lib/money";
 import { adjustBalance, deleteKey, setUserGroup, toggleKey, toggleUser } from "../../../actions";
@@ -47,6 +48,13 @@ export default async function UserPage({ params }: { params: Promise<{ id: strin
         </select>
         <button className="secondary">Save group</button>
       </form>
+
+      {user.role !== "admin" && (
+        <>
+          <h2>Reset password</h2>
+          <AdminPasswordReset userId={user.id} email={user.email} />
+        </>
+      )}
 
       <h2>Adjust balance</h2>
       <form action={adjustBalance} className="card form-grid">

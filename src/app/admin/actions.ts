@@ -14,6 +14,9 @@ import { usdToMicros } from "@/lib/money";
 import { audit } from "@/lib/audit";
 import { invalidateGroups } from "@/lib/groups";
 import { requireAdmin } from "@/lib/session";
+import { issueAuthToken } from "@/lib/auth-tokens";
+import { sendEmail } from "@/lib/email";
+import { appUrl } from "@/lib/url";
 import { generateRedeemCodes } from "@/lib/redeem";
 import { saveLimitSettings, saveRoutingSettings, saveSecuritySettings } from "@/lib/settings";
 import { PROVIDER_INFO } from "@/relay/providers/info";
@@ -287,6 +290,34 @@ export async function createUser(form: FormData) {
     await audit(admin, "user.create", `user:${user.id}`, { email, role, balance });
   });
   revalidatePath("/admin/users");
+}
+
+const RESET_LINK_TTL_MS = 60 * 60 * 1000;
+
+/**
+ * Helps a user who cannot reset their own password: emails them the usual reset link, or shows the
+ * admin a one-time link to pass on. The admin never sees or sets the password itself. Admin accounts
+ * are excluded so one admin cannot take over another's sign-in; they use "Forgot password".
+ */
+export async function adminPasswordReset(_prev: unknown, form: FormData): Promise<{ ok?: string; link?: string; error?: string }> {
+  const admin = await requireAdmin();
+  const userId = num(form, "userId", 0);
+  const mode = str(form, "mode") === "link" ? "link" : "email";
+  const [user] = await getDb().select().from(schema.users).where(eq(schema.users.id, userId));
+  if (!user) return { error: "user not found" };
+  if (user.role === "admin") return { error: "Admins reset their own password with Forgot password on the sign-in page." };
+  if (user.disabled) return { error: "This account is disabled. Enable it first." };
+  const token = await issueAuthToken(user.id, "reset_password", RESET_LINK_TTL_MS);
+  const link = `${appUrl()}/reset-password?token=${token}`;
+  // The token itself is never written to the audit log.
+  await audit(admin, "user.password_reset", `user:${user.id}`, { mode, email: user.email });
+  if (mode === "link") return { link, ok: "Link created. It works once and expires in 1 hour." };
+  await sendEmail({
+    to: user.email,
+    subject: "Reset your Tenon password",
+    text: `An administrator started a password reset for your account.\n\nChoose a new password here:\n${link}\n\nThe link expires in 1 hour. If you didn't expect this, ignore this email.`,
+  });
+  return { ok: `Reset email sent to ${user.email}.` };
 }
 
 export async function adjustBalance(form: FormData) {

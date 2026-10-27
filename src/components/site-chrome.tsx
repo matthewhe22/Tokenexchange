@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getDict, getLocale } from "@/lib/i18n";
 import { currentUser } from "@/lib/session";
+import { COMPANY_NAME } from "@/lib/company";
 import { LangSwitch } from "./lang-switch";
 import { TenonLogo } from "./logo";
 
@@ -38,13 +39,16 @@ export async function SiteFooter() {
       <div className="site-inner row" style={{ justifyContent: "space-between" }}>
         <span className="row" style={{ gap: 12 }}>
           <TenonLogo size={22} />
-          <span className="muted">© {new Date().getFullYear()} Tenon</span>
+          <span className="muted">
+            © {new Date().getFullYear()} Tenon · {t["footer.owned"].replace("{company}", COMPANY_NAME)}
+          </span>
         </span>
         <nav className="row">
           <Link href="/batch">{t["nav.batch"]}</Link>
           <Link href="/pricing">{t["nav.pricing"]}</Link>
           <Link href="/docs">{t["nav.docs"]}</Link>
           <Link href="/guides">{t["nav.guides"]}</Link>
+          <Link href="/about">{t["footer.about"]}</Link>
           <Link href="/terms">{t["footer.terms"]}</Link>
           <Link href="/privacy">{t["footer.privacy"]}</Link>
         </nav>

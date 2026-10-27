@@ -1,3 +1,4 @@
+import { COMPANY_NAME } from "@/lib/company";
 import { pageMetadata } from "@/lib/seo";
 export const metadata = pageMetadata({ path: "/privacy", title: "Privacy Policy", description: "What Tenon collects, why, and how long it is kept. Request and response content is not stored." });
 
@@ -7,6 +8,7 @@ export default function PrivacyPage() {
     <article className="site-inner section prose">
       <h1 className="page-title">Privacy Policy</h1>
       <p className="muted">Last updated: draft</p>
+      <p>This policy applies to Tenon, which is owned and operated by {COMPANY_NAME}.</p>
       <h2>What we collect</h2>
       <ul>
         <li>Account data: email address and a hashed password.</li>

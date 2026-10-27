@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { JsonLd, faqJsonLd } from "@/components/json-ld";
+import { COMPANY_NAME } from "@/lib/company";
 import { pageMetadata, SITE_NAME } from "@/lib/seo";
 import { appUrl } from "@/lib/url";
 import { SdkTabs } from "@/components/sdk-tabs";
@@ -122,7 +123,7 @@ export default async function Home() {
 
       <JsonLd
         data={[
-          { "@context": "https://schema.org", "@type": "Organization", name: SITE_NAME, url: appUrl(), logo: `${appUrl()}/apple-icon.png` },
+          { "@context": "https://schema.org", "@type": "Organization", name: SITE_NAME, legalName: COMPANY_NAME, url: appUrl(), logo: `${appUrl()}/apple-icon.png` },
           { "@context": "https://schema.org", "@type": "WebSite", name: SITE_NAME, url: appUrl() },
           faqJsonLd(([1, 2, 3, 4] as const).map((i) => ({ q: t[`home.q${i}`], a: t[`home.a${i}`] }))),
         ]}

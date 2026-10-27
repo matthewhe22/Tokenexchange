@@ -1,6 +1,8 @@
 import { desc, eq } from "drizzle-orm";
 import { getDb, schema } from "@/db";
 import { RedeemForm } from "@/components/redeem-form";
+import Link from "next/link";
+import { COMPANY_NAME } from "@/lib/company";
 import { formatUsd } from "@/lib/money";
 import { requireUser } from "@/lib/session";
 import { stripeEnabled, TOPUP_MAX_USD, TOPUP_MIN_USD, TOPUP_PRESETS_USD } from "@/lib/stripe";
@@ -54,6 +56,14 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
       ) : (
         <div className="card muted">Online payments are not enabled yet. Contact support to add credit.</div>
       )}
+
+      <p className="muted" style={{ fontSize: 13 }}>
+        <strong>Disclaimer.</strong> Tenon is owned and operated by {COMPANY_NAME}. Card payments are processed by Stripe; your card
+        details are entered on Stripe&apos;s secure pages and are never seen or stored by Tenon. Credit is prepaid, is spent per token
+        at the published rates, and unused credit is refundable on request within 30 days of purchase, less any amount already
+        used (see the <Link href="/terms">Terms of Service</Link>). Tenon is an independent service and is not affiliated with
+        OpenAI, Anthropic, Google or any other model provider; their names are trademarks of their respective owners.
+      </p>
 
       <RedeemForm />
 
